@@ -232,12 +232,17 @@ if (WIVRN_BUILD_SERVER)
 		endif()
 	endif()
 
-	if(WIVRN_USE_PIPEWIRE AND NOT WIN32)
+		if(WIVRN_USE_PIPEWIRE AND NOT WIN32)
 		target_sources(
 			wivrn-server
 			PRIVATE audio/audio_pipewire.cpp
-			)
+		)
 		target_link_libraries(wivrn-server PRIVATE PkgConfig::libpipewire)
+	endif()
+
+	if(WIN32)
+		target_sources(wivrn-server PRIVATE audio/audio_wasapi.cpp)
+		target_link_libraries(wivrn-server PRIVATE ole32 uuid)
 	endif()
 
 	# Generate dbus interface code as a separate target to avoid warnings in generated code

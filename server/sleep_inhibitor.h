@@ -20,7 +20,9 @@
 
 class sleep_inhibitor
 {
+#if !defined(_WIN32)
 	int fd = -1;
+#endif
 
 public:
 	sleep_inhibitor();

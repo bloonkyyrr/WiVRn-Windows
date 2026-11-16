@@ -22,7 +22,9 @@
 #include "util/u_logging.h"
 #include "wivrn_config.h"
 
-#if WIVRN_USE_PIPEWIRE
+#if defined(_WIN32)
+#include "audio_wasapi.h"
+#elif WIVRN_USE_PIPEWIRE
 #include "audio_pipewire.h"
 #endif
 
@@ -34,7 +36,10 @@ std::unique_ptr<wivrn::audio_device> wivrn::audio_device::create(
         const wivrn::from_headset::headset_info_packet & info,
         wivrn::wivrn_session & session)
 {
-#if WIVRN_USE_PIPEWIRE
+#if defined(_WIN32)
+	if (auto res = create_wasapi_handle(source_name, source_description, sink_name, sink_description, info, session))
+		return res;
+#elif WIVRN_USE_PIPEWIRE
 	if (auto res = create_pipewire_handle(source_name, source_description, sink_name, sink_description, info, session))
 		return res;
 #endif

@@ -91,20 +91,14 @@ class publisher_windows : public service_publisher
 	PDNS_SERVICE_INSTANCE instance = nullptr;
 	bool registered = false;
 
-	static void WINAPI complete(DWORD status, PVOID context, PDNS_SERVICE_INSTANCE)
-	{
-		auto * self = static_cast<publisher_windows *>(context);
-		self->registered = status == ERROR_SUCCESS;
-		if (not self->registered)
-			std::cerr << "mDNS service registration failed: " << status << std::endl;
-	}
-
 public:
 	publisher_windows(const std::string & name,
 	                 const std::string & type,
 	                 int port,
 	                 const std::map<std::string, std::string> & txt)
 	{
+		platform::initialize_networking();
+
 		std::string instance_name = name + "." + type;
 		if (instance_name.find(".local") == std::string::npos)
 			instance_name += ".local";
@@ -137,7 +131,7 @@ public:
 		                                      wide_host.c_str(),
 		                                      nullptr,
 		                                      nullptr,
-		                                      					                                      htons((unsigned short)port),
+		                                      htons((unsigned short)port),
 		                                      0,
 		                                      0,
 		                                      (DWORD)key_ptrs.size(),
@@ -153,12 +147,12 @@ public:
 		request.Version = DNS_QUERY_REQUEST_VERSION1;
 		request.InterfaceIndex = 0;
 		request.pServiceInstance = instance;
-		request.pRegisterCompletionRoutine = &complete;
-		request.pRegisterCompletionContext = this;
-		request.dwFlags = 0;
+		request.unicastEnabled = FALSE;
 
+		// A null completion routine makes DnsServiceRegister synchronous.
 		DNS_STATUS status = DnsServiceRegister(&request, nullptr);
-		if (status != DNS_REQUEST_PENDING and status != ERROR_SUCCESS)
+		registered = status == ERROR_SUCCESS;
+		if (not registered)
 			std::cerr << "DnsServiceRegister failed: " << status << std::endl;
 	}
 

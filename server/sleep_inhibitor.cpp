@@ -94,8 +94,19 @@ sleep_inhibitor::~sleep_inhibitor()
 
 #else
 
-// Sleep inhibition is handled by the Windows power APIs in a later phase.
-sleep_inhibitor::sleep_inhibitor() {}
-sleep_inhibitor::~sleep_inhibitor() {}
+#include <windows.h>
+
+#include <iostream>
+
+sleep_inhibitor::sleep_inhibitor()
+{
+	if (SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) == 0)
+		std::cerr << "Cannot inhibit system sleep" << std::endl;
+}
+
+sleep_inhibitor::~sleep_inhibitor()
+{
+	SetThreadExecutionState(ES_CONTINUOUS);
+}
 
 #endif

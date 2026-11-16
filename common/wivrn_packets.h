@@ -23,8 +23,11 @@
 #include <chrono>
 #include <cstdint>
 #include <magic_enum.hpp>
+#if defined(_WIN32)
+#include <winsock2.h>
+#else
 #include <netinet/in.h>
-#include <openssl/aes.h>
+#endif
 #include <optional>
 #include <span>
 #include <string>

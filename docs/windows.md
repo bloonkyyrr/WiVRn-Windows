@@ -48,3 +48,11 @@ backends exist:
 
 Remaining porting work is tracked in the phase plan: networking (`wivrn_sockets`),
 process/service management, IPC/service discovery, audio, and input forwarding.
+
+## Audio
+
+The Windows server uses WASAPI loopback capture of the default render endpoint
+and sends that stream to the headset speaker. Because Windows has no in-process
+way to publish a virtual audio device, microphone forwarding is not advertised:
+apps keep using the default capture device. Routing game audio exclusively to
+the headset requires a virtual audio driver, which this port does not install.
