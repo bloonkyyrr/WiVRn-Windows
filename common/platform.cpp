@@ -20,6 +20,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace wivrn::platform
 {
@@ -218,6 +219,186 @@ void terminate_process(process_id pid, bool force)
 	CloseHandle(handle);
 #else
 	::kill(pid, force ? SIGKILL : SIGTERM);
+#endif
+}
+
+void terminate_process_group(process_id pid, bool force)
+{
+#if defined(_WIN32)
+	// Windows has no process groups comparable to POSIX; terminate the process.
+	terminate_process(pid, force);
+#else
+	::kill(-pid, force ? SIGKILL : SIGTERM);
+#endif
+}
+
+void set_environment_variable(const char * name, const char * value, bool overwrite)
+{
+#if defined(_WIN32)
+	(void)overwrite;
+	_putenv_s(name, value);
+#else
+	setenv(name, value, overwrite ? 1 : 0);
+#endif
+}
+
+process_id spawn_process(const std::vector<std::string> & args,
+                         const std::optional<std::filesystem::path> & working_directory,
+                         bool new_process_group)
+{
+	if (args.empty())
+		throw std::invalid_argument("spawn_process: empty command");
+
+#if defined(_WIN32)
+	auto quote = [](const std::string & arg) {
+		if (arg.find_first_of(" \t\"") == std::string::npos)
+			return arg;
+
+		std::string quoted = "\"";
+		int backslashes = 0;
+		for (char c: arg)
+		{
+			if (c == '\\')
+			{
+				++backslashes;
+			}
+			else if (c == '"')
+			{
+				quoted.append(backslashes * 2 + 1, '\\');
+				quoted += '"';
+				backslashes = 0;
+			}
+			else
+			{
+				quoted.append(backslashes, '\\');
+				quoted += c;
+				backslashes = 0;
+			}
+		}
+		quoted.append(backslashes * 2, '\\');
+		quoted += '"';
+		return quoted;
+	};
+
+	std::string command_line;
+	for (const auto & arg: args)
+	{
+		if (!command_line.empty())
+			command_line += ' ';
+		command_line += quote(arg);
+	}
+
+	std::vector<char> mutable_command_line(command_line.begin(), command_line.end());
+	mutable_command_line.push_back('\0');
+
+	std::string cwd = working_directory ? working_directory->string() : std::string();
+
+	STARTUPINFOA startup{};
+	startup.cb = sizeof(startup);
+	PROCESS_INFORMATION process{};
+
+	DWORD flags = new_process_group ? CREATE_NEW_PROCESS_GROUP : 0;
+	if (!CreateProcessA(nullptr,
+	                    mutable_command_line.data(),
+	                    nullptr,
+	                    nullptr,
+	                    FALSE,
+	                    flags,
+	                    nullptr,
+	                    cwd.empty() ? nullptr : cwd.c_str(),
+	                    &startup,
+	                    &process))
+	{
+		throw std::system_error((int)GetLastError(), std::system_category(), "CreateProcess");
+	}
+
+	CloseHandle(process.hThread);
+	CloseHandle(process.hProcess);
+	return process.dwProcessId;
+#else
+	std::vector<char *> argv;
+	argv.reserve(args.size() + 1);
+	for (const auto & arg: args)
+		argv.push_back(const_cast<char *>(arg.c_str()));
+	argv.push_back(nullptr);
+
+	pid_t pid = fork();
+	if (pid < 0)
+		throw std::system_error(errno, std::generic_category(), "fork");
+
+	if (pid == 0)
+	{
+		if (new_process_group)
+			setpgid(0, 0);
+
+		if (working_directory && !working_directory->empty())
+		{
+			if (chdir(working_directory->c_str()) != 0)
+				_exit(127);
+		}
+
+		execvp(argv[0], argv.data());
+		_exit(127);
+	}
+
+	return pid;
+#endif
+}
+
+bool wait_process(process_id pid, int & status)
+{
+#if defined(_WIN32)
+	HANDLE handle = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	if (!handle)
+		return false;
+
+	bool ok = WaitForSingleObject(handle, INFINITE) == WAIT_OBJECT_0;
+	if (ok)
+	{
+		DWORD code = 0;
+		ok = GetExitCodeProcess(handle, &code) != 0;
+		if (ok)
+			status = (int)code;
+	}
+	CloseHandle(handle);
+	return ok;
+#else
+	int result;
+	do
+	{
+		result = waitpid(pid, &status, 0);
+	} while (result < 0 && errno == EINTR);
+	return result == pid;
+#endif
+}
+
+int process_exit_code(int status)
+{
+#if defined(_WIN32)
+	return status;
+#else
+	return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+#endif
+}
+
+bool process_terminated_by_signal(int status)
+{
+#if defined(_WIN32)
+	(void)status;
+	return false;
+#else
+	return WIFSIGNALED(status);
+#endif
+}
+
+std::string process_signal_name(int status)
+{
+#if defined(_WIN32)
+	(void)status;
+	return "terminated";
+#else
+	const char * name = strsignal(WTERMSIG(status));
+	return name ? name : "unknown signal";
 #endif
 }
 

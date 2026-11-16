@@ -18,8 +18,9 @@
 
 #pragma once
 
+#include "platform.h"
+
 #include <filesystem>
-#include <unistd.h>
 #include <vector>
 
 namespace wivrn
@@ -29,7 +30,7 @@ class active_runtime
 {
 	std::vector<std::filesystem::path> active_runtime_json;
 	std::filesystem::path openvr_manifest;
-	pid_t pid;
+	platform::process_id pid;
 
 public:
 	active_runtime();

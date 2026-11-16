@@ -155,7 +155,7 @@ static std::string get_abi(const std::filesystem::path & filename)
 }
 
 active_runtime::active_runtime() :
-        pid(getpid())
+        pid(platform::current_process_id())
 {
 	for (const auto & manifest: manifest_path())
 	{
@@ -210,7 +210,7 @@ active_runtime::active_runtime() :
 
 active_runtime::~active_runtime()
 {
-	if (pid != getpid())
+	if (pid != platform::current_process_id())
 		return;
 	for (const auto & manifest: active_runtime_json)
 	{

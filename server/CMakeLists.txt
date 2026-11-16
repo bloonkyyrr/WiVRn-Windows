@@ -94,12 +94,10 @@ if (WIVRN_BUILD_SERVER)
 	add_executable(wivrn-server
 			accept_connection.cpp
 			active_runtime.cpp
-			avahi_publisher.cpp
 			hostname.cpp
 			main.cpp
 			sleep_inhibitor.cpp
 			start_application.cpp
-			start_systemd_unit.cpp
 			ipc_server_cb.cpp
 			target_instance_wivrn.cpp
 			wivrn_ipc.cpp
@@ -143,6 +141,13 @@ if (WIVRN_BUILD_SERVER)
 		)
 	target_compile_features(wivrn-server PRIVATE cxx_std_20)
 	target_compile_definitions(wivrn-server PRIVATE VULKAN_HPP_NO_CONSTRUCTORS)
+
+	if(WIVRN_USE_AVAHI)
+		target_sources(wivrn-server PRIVATE avahi_publisher.cpp)
+	endif()
+	if(WIVRN_USE_GLIB)
+		target_sources(wivrn-server PRIVATE start_systemd_unit.cpp)
+	endif()
 
 	target_include_directories(wivrn-server SYSTEM PRIVATE ${monado_SOURCE_DIR}/src/xrt/compositor/)
 	target_include_directories(wivrn-server PRIVATE .)

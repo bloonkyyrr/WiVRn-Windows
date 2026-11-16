@@ -17,16 +17,20 @@
  */
 #pragma once
 
+#include "platform.h"
+
 #include <functional>
-#include <glib.h>
+#include <mutex>
 #include <optional>
 #include <string>
-#include <sys/types.h>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 namespace wivrn
 {
+
+using platform::process_id;
 
 class children_manager
 {
@@ -46,11 +50,15 @@ class forked_children : public children_manager
 {
 	struct watches
 	{
-		guint child = 0;
-		guint kill = 0;
+		unsigned int child = 0;
+		unsigned int kill = 0;
 	};
-	std::unordered_map<pid_t, watches> children;
+	std::unordered_map<process_id, watches> children;
+	mutable std::mutex mutex;
 	std::function<void()> state_changed_cb;
+#if defined(_WIN32)
+	std::vector<std::jthread> waiters;
+#endif
 
 public:
 	forked_children(std::function<void()> state_changed_cb);

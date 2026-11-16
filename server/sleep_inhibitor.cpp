@@ -17,10 +17,14 @@
  */
 
 #include "sleep_inhibitor.h"
+
+#include "platform.h"
+
+#if !defined(_WIN32)
+
 #include <gio/gio.h>
 #include <glib.h>
 #include <iostream>
-#include <unistd.h>
 
 sleep_inhibitor::sleep_inhibitor()
 {
@@ -85,5 +89,13 @@ sleep_inhibitor::sleep_inhibitor()
 sleep_inhibitor::~sleep_inhibitor()
 {
 	if (fd >= 0)
-		close(fd);
+		platform::close_socket(fd);
 }
+
+#else
+
+// Sleep inhibition is handled by the Windows power APIs in a later phase.
+sleep_inhibitor::sleep_inhibitor() {}
+sleep_inhibitor::~sleep_inhibitor() {}
+
+#endif

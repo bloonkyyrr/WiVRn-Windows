@@ -25,9 +25,11 @@
 #include <cerrno>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -124,6 +126,24 @@ void initialize_networking();
 process_id current_process_id();
 bool process_exists(process_id pid);
 void terminate_process(process_id pid, bool force);
+void terminate_process_group(process_id pid, bool force);
+
+/// Set an environment variable in the current process.
+void set_environment_variable(const char * name, const char * value, bool overwrite = true);
+
+/// Spawn a process, optionally in its own process group.
+/// On POSIX this is fork+execvp; on Windows it is CreateProcessA.
+process_id spawn_process(const std::vector<std::string> & args,
+                         const std::optional<std::filesystem::path> & working_directory = {},
+                         bool new_process_group = true);
+
+/// Block until the process exits, storing its platform status. Returns false on error.
+bool wait_process(process_id pid, int & status);
+
+/// Decode a status returned by wait_process/waitpid.
+int process_exit_code(int status);
+bool process_terminated_by_signal(int status);
+std::string process_signal_name(int status);
 
 /// User directories, following XDG on POSIX and the standard Windows folders.
 std::filesystem::path home_directory();
