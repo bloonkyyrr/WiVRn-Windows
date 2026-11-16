@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -110,7 +111,7 @@ nlohmann::json configuration::read_configuration()
 				}
 				catch (std::exception & e)
 				{
-					U_LOG_E("Invalid configuration file %s: %s", path.c_str(), e.what());
+					U_LOG_E("Invalid configuration file %s: %s", path.string().c_str(), e.what());
 				}
 			}
 		}
@@ -124,7 +125,7 @@ nlohmann::json configuration::read_configuration()
 		}
 		catch (std::exception & e)
 		{
-			U_LOG_E("Invalid configuration file %s: %s", config_file.c_str(), e.what());
+			U_LOG_E("Invalid configuration file %s: %s", config_file.string().c_str(), e.what());
 			return nlohmann::json();
 		}
 	}
@@ -284,26 +285,24 @@ std::string to_iso8601(std::chrono::system_clock::time_point timestamp)
 	// Truncate to an integer number of seconds to be parsable by strptime
 	auto t = std::chrono::time_point_cast<std::chrono::seconds>(timestamp);
 
-#if __cpp_lib_chrono >= 201907L
-	return std::format("{:%FT%H:%M:%S%z}", std::chrono::zoned_time{std::chrono::current_zone(), t});
-#else
 	return std::format("{:%FT%H:%M:%S%z}", t);
-#endif
-}
-
-template <typename T>
-std::string to_iso8601(std::chrono::zoned_time<T> timestamp)
-{
-	return std::format("{:%FT%H:%M:%S%z}", timestamp);
 }
 
 std::optional<std::chrono::system_clock::time_point> from_iso8601(const std::string & timestamp)
 {
-	tm t;
-	if (strptime(timestamp.c_str(), "%FT%H:%M:%S%z", &t) == nullptr)
+	tm t{};
+	int year{}, month{}, day{}, hour{}, minute{}, second{};
+	if (std::sscanf(timestamp.c_str(), "%d-%d-%dT%d:%d:%d", &year, &month, &day, &hour, &minute, &second) != 6)
 		return std::nullopt;
 
-	return std::chrono::system_clock::from_time_t(mktime(&t));
+	t.tm_year = year - 1900;
+	t.tm_mon = month - 1;
+	t.tm_mday = day;
+	t.tm_hour = hour;
+	t.tm_min = minute;
+	t.tm_sec = second;
+
+	return std::chrono::system_clock::from_time_t(std::mktime(&t));
 }
 
 std::vector<headset_key> known_keys()

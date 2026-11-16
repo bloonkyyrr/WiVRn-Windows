@@ -1,3 +1,4 @@
+#if !defined(_WIN32)
 /*
  * WiVRn VR streaming
  * Copyright (C) 2025  Guillaume Meunier <guillaume.meunier@centraliens.net>
@@ -598,3 +599,14 @@ const std::vector<wivrn::icon> & wivrn::load_icon(const std::filesystem::path & 
 
 	throw std::runtime_error{"Cannot load icon: " + filename.native()};
 }
+
+#else
+#include "load_icon.h"
+#include <vector>
+namespace wivrn {
+const std::vector<icon> & load_icon(const std::filesystem::path & filename) {
+	static std::vector<icon> empty;
+	return empty;
+}
+} // namespace wivrn
+#endif

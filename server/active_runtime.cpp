@@ -19,6 +19,7 @@
 
 #include "active_runtime.h"
 #include "driver/configuration.h"
+#include "platform.h"
 #include "utils/flatpak.h"
 #include "utils/overloaded.h"
 #include "utils/xdg_base_directory.h"
@@ -29,12 +30,12 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 
-static std::vector<std::filesystem::path> filter_files(const std::filesystem::path & directory, const std::string prefix)
+static std::vector<std::filesystem::path> filter_files(const std::filesystem::path & directory, const std::filesystem::path & prefix)
 {
 	std::vector<std::filesystem::path> result;
 	for (const auto & file: std::filesystem::directory_iterator{directory})
 	{
-		if (file.path().filename().native().starts_with(prefix))
+		if (file.path().filename().string().starts_with(prefix.string()))
 			result.push_back(file.path());
 	}
 	return result;
@@ -52,7 +53,13 @@ std::vector<std::filesystem::path> active_runtime::manifest_path()
 		return {*path / location / "openxr_wivrn.json"};
 
 	// Check if running from build directory
+#if defined(_WIN32)
+	char exe_path[MAX_PATH]{};
+	DWORD exe_length = GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
+	auto exe = exe_length ? std::filesystem::path(exe_path) : std::filesystem::path();
+#else
 	auto exe = std::filesystem::read_symlink("/proc/self/exe");
+#endif
 	auto dev_manifest = exe.parent_path().parent_path() / "openxr_wivrn-dev.json";
 	if (std::filesystem::exists(dev_manifest))
 		return {dev_manifest};
@@ -126,7 +133,7 @@ static const std::filesystem::path & backup_and_symlink(
 
 static std::string get_abi(const std::filesystem::path & filename)
 {
-	std::string abi = filename.stem().extension();
+	std::string abi = filename.stem().extension().string();
 	// https://registry.khronos.org/OpenXR/specs/1.0/loader.html#architecture-identifiers
 	if (not abi.empty() and
 	    std::ranges::contains(std::array{
@@ -178,7 +185,7 @@ active_runtime::active_runtime() :
 			std::cerr << "Not setting an OpenVR compatibility library" << std::endl;
 		else
 		{
-			std::cerr << "Setting the OpenVR compatibility library to " << ovr_compat.native() << std::endl;
+			std::cerr << "Setting the OpenVR compatibility library to " << ovr_compat.string() << std::endl;
 			if (not wivrn::is_flatpak())
 			{
 				auto vrclient = ovr_compat / "bin"

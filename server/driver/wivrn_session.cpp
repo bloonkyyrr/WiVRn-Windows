@@ -54,6 +54,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <magic_enum.hpp>
 #include <multi/comp_multi_interface.h>
 #include <stdexcept>
@@ -262,7 +263,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	if (auto system_name = get_info().system_name; !system_name.empty())
 	{
 		system_name += " on WiVRn";
-		strlcpy(xrt_system.base.properties.name, system_name.c_str(), std::size(xrt_system.base.properties.name));
+		snprintf(xrt_system.base.properties.name, std::size(xrt_system.base.properties.name), "%s", system_name.c_str());
 	}
 
 	if (conf.hid_forwarding)
