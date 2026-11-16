@@ -25,13 +25,27 @@
 #include <atomic>
 #include <cassert>
 #include <exception>
-#include <fcntl.h>
 #include <memory>
 #include <mutex>
-#include <netinet/ip.h>
 #include <span>
 #include <utility>
 #include <vector>
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#ifndef F_SETFD
+#define F_SETFD 0
+#endif
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC 0
+#endif
+#ifndef fcntl
+#define fcntl(a, b, c) (0)
+#endif
+#else
+#include <fcntl.h>
+#include <netinet/ip.h>
+#endif
 
 namespace wivrn
 {

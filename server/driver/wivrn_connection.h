@@ -25,7 +25,27 @@
 
 #include <atomic>
 #include <optional>
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#ifndef SHUT_RDWR
+#define SHUT_RDWR SD_BOTH
+#endif
+#ifndef POLLIN
+#define POLLIN 0x0100
+#endif
+#ifndef POLLHUP
+#define POLLHUP 0x0002
+#endif
+#ifndef POLLERR
+#define POLLERR 0x0008
+#endif
+#ifndef poll
+#define poll WSAPoll
+#endif
+#else
 #include <poll.h>
+#endif
 #include <stdexcept>
 #include <stop_token>
 #include <system_error>

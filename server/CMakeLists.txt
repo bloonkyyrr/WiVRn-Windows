@@ -187,7 +187,11 @@ if (WIVRN_BUILD_SERVER)
 
 	if(WIVRN_USE_X264)
 		target_sources(wivrn-server PRIVATE encoder/video_encoder_x264.cpp)
-		target_link_libraries(wivrn-server PRIVATE PkgConfig::X264)
+		if(WIN32)
+			target_link_libraries(wivrn-server PRIVATE x264)
+		else()
+			target_link_libraries(wivrn-server PRIVATE PkgConfig::X264)
+		endif()
 	endif()
 
 	if(WIVRN_USE_PERFETTO)
@@ -209,7 +213,7 @@ if (WIVRN_BUILD_SERVER)
 		endif()
 	endif()
 
-	if(WIVRN_USE_PIPEWIRE)
+	if(WIVRN_USE_PIPEWIRE AND NOT WIN32)
 		target_sources(
 			wivrn-server
 			PRIVATE audio/audio_pipewire.cpp
@@ -218,6 +222,7 @@ if (WIVRN_BUILD_SERVER)
 	endif()
 
 	# Generate dbus interface code as a separate target to avoid warnings in generated code
+	if(WIVRN_USE_GLIB)
 	add_custom_command(OUTPUT wivrn_server_dbus.c wivrn_server_dbus.h
 			   COMMAND ${GDBUS_CODEGEN} ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/io.github.wivrn.Server.xml --interface-prefix io.github.wivrn --generate-c-code wivrn_server_dbus --c-namespace Wivrn
 			   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/io.github.wivrn.Server.xml)
@@ -229,8 +234,12 @@ if (WIVRN_BUILD_SERVER)
 	target_include_directories(wivrn-server-dbus PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 	add_dependencies(wivrn-server-dbus wivrn-server-dbus-codegen)
 	target_link_libraries(wivrn-server-dbus PUBLIC PkgConfig::glib2)
-	target_link_libraries(wivrn-server PUBLIC wivrn-server-dbus)
-	target_link_libraries(wivrn-server PUBLIC PkgConfig::libnotify)
+	if(WIVRN_USE_GLIB)
+		target_link_libraries(wivrn-server PUBLIC wivrn-server-dbus)
+	endif()
+	if(WIVRN_USE_LIBNOTIFY)
+		target_link_libraries(wivrn-server PUBLIC PkgConfig::libnotify)
+	endif()
 
 	add_custom_command(OUTPUT systemd_manager.c systemd_manager.h
 			   COMMAND ${GDBUS_CODEGEN} ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/org.freedesktop.systemd1.Manager.xml --interface-prefix org.freedesktop.systemd1 --generate-c-code systemd_manager --c-namespace systemd
@@ -241,6 +250,7 @@ if (WIVRN_BUILD_SERVER)
 	target_sources(wivrn-server-dbus PRIVATE
 		${CMAKE_CURRENT_BINARY_DIR}/systemd_manager.c ${CMAKE_CURRENT_BINARY_DIR}/systemd_manager.h
 		${CMAKE_CURRENT_BINARY_DIR}/systemd_unit.c ${CMAKE_CURRENT_BINARY_DIR}/systemd_unit.h)
+	endif()
 
 	target_link_libraries(
 		wivrn-server
@@ -257,7 +267,6 @@ if (WIVRN_BUILD_SERVER)
 			xrt-external-openxr
 			xrt-interfaces
 
-			PkgConfig::AVAHI
 			Eigen3::Eigen
 			wivrn-common
 			wivrn-common-server
@@ -267,6 +276,10 @@ if (WIVRN_BUILD_SERVER)
 
 	include(CompileGLSL)
 	FetchContent_GetProperties(monado SOURCE_DIR _monado_src)
+	if(WIVRN_USE_AVAHI)
+		target_link_libraries(wivrn-server PRIVATE PkgConfig::AVAHI)
+	endif()
+
 	wivrn_compile_glsl(wivrn-server
 		TARGET_ENV vulkan1.3
 		SHADERS
@@ -276,13 +289,15 @@ if (WIVRN_BUILD_SERVER)
 
 	target_compile_definitions(wivrn-server PRIVATE JSON_DIAGNOSTICS=1)
 
-	configure_file(dist/wivrn.service.in wivrn.service)
-	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wivrn.service
-		DESTINATION lib/systemd/user/)
+	if(WIVRN_USE_SYSTEMD)
+		configure_file(dist/wivrn.service.in wivrn.service)
+		install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wivrn.service
+			DESTINATION lib/systemd/user/)
 
-	install(FILES dist/firewalld-wivrn.xml
-		RENAME wivrn.xml
-		DESTINATION lib/firewalld/services)
+		install(FILES dist/firewalld-wivrn.xml
+			RENAME wivrn.xml
+			DESTINATION lib/firewalld/services)
+	endif()
 
 	install(TARGETS wivrn-server)
 endif()

@@ -25,12 +25,17 @@
 #include "wivrn_ipc.h"
 #include "wivrn_packets.h"
 #include <algorithm>
-#include <arpa/inet.h>
 #include <chrono>
-#include <poll.h>
 #include <regex>
-#include <sys/socket.h>
 #include <variant>
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <poll.h>
+#include <sys/socket.h>
+#endif
 
 using namespace std::chrono_literals;
 
