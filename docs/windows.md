@@ -36,7 +36,7 @@ backends exist:
 | `WIVRN_USE_VAAPI` | Linux-only, off |
 | `WIVRN_USE_PIPEWIRE` | Linux-only, off |
 | `WIVRN_USE_SYSTEMD` | Linux-only, off |
-| `WIVRN_USE_AVAHI` | needs a Windows mDNS backend, off |
+| `WIVRN_USE_AVAHI` | Avahi-specific; Windows uses DNS-SD directly, off |
 | `WIVRN_USE_GLIB` | DBus/GLib integration, off |
 | `WIVRN_USE_LIBNOTIFY` | needs a Windows notification backend, off |
 | `WIVRN_USE_LIBRSVG` | off |
@@ -46,8 +46,20 @@ backends exist:
 | `WIVRN_BUILD_DASHBOARD` | KDE/Qt Linux integration, off |
 | `WIVRN_BUILD_CLIENT` | Android-only, off |
 
-Remaining porting work is tracked in the phase plan: networking (`wivrn_sockets`),
-process/service management, IPC/service discovery, audio, and input forwarding.
+All phases in the porting plan are implemented. The Windows server still needs
+a Windows-capable Monado build; the remaining limitations are listed below.
+
+## Input
+
+Keyboard and mouse input from the headset is injected with `SendInput`. Linux
+evdev key codes are translated to Windows virtual-key codes; keys without a
+mapping are ignored instead of being injected as a different key. Relative
+mouse motion and both scroll axes are forwarded as-is.
+
+Gamepad input is exposed to OpenXR applications through `/user/gamepad`.
+Mirroring it to non-OpenXR applications needs a virtual gamepad driver such as
+ViGEmBus, which this port does not install; the mirroring option is a no-op on
+Windows and logs a one-time notice.
 
 ## Audio
 
