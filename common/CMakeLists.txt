@@ -8,10 +8,14 @@ endif()
 configure_file(wivrn_config.h.in wivrn_config.h)
 
 add_library(wivrn-common-base STATIC EXCLUDE_FROM_ALL
+    platform.cpp
     utils/strings.cpp
     utils/xdg_base_directory.cpp
     ${CMAKE_BINARY_DIR}/version.cpp
 )
+if(WIN32)
+    target_link_libraries(wivrn-common-base PUBLIC ws2_32)
+endif()
 add_dependencies(wivrn-common-base wivrn-version)
 
 add_library(wivrn-common STATIC EXCLUDE_FROM_ALL
