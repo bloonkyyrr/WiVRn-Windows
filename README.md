@@ -10,7 +10,7 @@
 
 # About
 
-WiVRn is an application that wirelessly streams a virtual reality game to a standalone VR headset from a <b>Linux</b> computer.
+WiVRn is an application that wirelessly streams a virtual reality game to a standalone VR headset from a <b>WINDOWS</b> PC, FUCK LINUX.
 
 WiVRn support a wide range of VR devices:
 
