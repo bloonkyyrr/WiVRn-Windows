@@ -1,5 +1,16 @@
 #include "wivrn_uinput.h"
 
+#if defined(_WIN32)
+
+#include "wivrn_packets.h"
+
+void wivrn_uinput::handle_input(wivrn::from_headset::hid::input &) {}
+void wivrn_uinput::handle_gamepad(const wivrn::from_headset::inputs &) {}
+void wivrn_uinput::destroy_gamepad() {}
+std::vector<wivrn::to_headset::haptics> wivrn_uinput::read_rumble() { return {}; }
+
+#else
+
 #include "utils/overloaded.h"
 #include "wivrn_gamepad_map.h"
 #include <algorithm>
@@ -382,3 +393,5 @@ void wivrn_uinput::init_gamepad()
 	write_or_throw(fd, &uidev, sizeof(uidev));
 	ioctl_or_throw(fd, UI_DEV_CREATE);
 }
+
+#endif
