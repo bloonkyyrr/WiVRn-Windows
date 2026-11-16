@@ -1,5 +1,11 @@
 set(U_GIT_TAG_CPP "${CMAKE_BINARY_DIR}/u_git_tag.cpp")
 
+if(WIVRN_BUILD_SERVER AND NOT WIN32)
+    if(NOT WIVRN_USE_GLIB OR NOT WIVRN_USE_AVAHI OR NOT WIVRN_USE_LIBNOTIFY)
+        message(FATAL_ERROR "wivrn-server requires GLib, Avahi and libnotify on POSIX")
+    endif()
+endif()
+
 set(XRT_BUILD_DRIVER_ARDUINO            OFF)
 set(XRT_BUILD_DRIVER_BLUBUR_S1          OFF)
 set(XRT_BUILD_DRIVER_DAYDREAM           OFF)
@@ -96,6 +102,7 @@ if (WIVRN_BUILD_SERVER)
 			active_runtime.cpp
 			hostname.cpp
 			main.cpp
+			main_platform.h
 			sleep_inhibitor.cpp
 			start_application.cpp
 			ipc_server_cb.cpp
@@ -141,6 +148,13 @@ if (WIVRN_BUILD_SERVER)
 		)
 	target_compile_features(wivrn-server PRIVATE cxx_std_20)
 	target_compile_definitions(wivrn-server PRIVATE VULKAN_HPP_NO_CONSTRUCTORS)
+
+	if(WIN32)
+		target_sources(wivrn-server PRIVATE main_platform_windows.cpp)
+		target_link_libraries(wivrn-server PRIVATE dnsapi)
+	else()
+		target_sources(wivrn-server PRIVATE main_platform_posix.cpp)
+	endif()
 
 	if(WIVRN_USE_AVAHI)
 		target_sources(wivrn-server PRIVATE avahi_publisher.cpp)

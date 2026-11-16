@@ -89,7 +89,7 @@ sleep_inhibitor::sleep_inhibitor()
 sleep_inhibitor::~sleep_inhibitor()
 {
 	if (fd >= 0)
-		platform::close_socket(fd);
+		wivrn::platform::close_socket(fd);
 }
 
 #else

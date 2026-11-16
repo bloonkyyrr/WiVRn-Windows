@@ -18,9 +18,40 @@
 
 #include "platform.h"
 
+#include <atomic>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+
+namespace
+{
+std::atomic<int> g_shutdown_signal{0};
+
+#if defined(_WIN32)
+BOOL WINAPI console_ctrl_handler(DWORD type)
+{
+	switch (type)
+	{
+		case CTRL_C_EVENT:
+			g_shutdown_signal.store(SIGINT);
+			return TRUE;
+		case CTRL_BREAK_EVENT:
+		case CTRL_CLOSE_EVENT:
+		case CTRL_SHUTDOWN_EVENT:
+			g_shutdown_signal.store(SIGTERM);
+			return TRUE;
+		default:
+			return FALSE;
+	}
+}
+#else
+extern "C" void shutdown_signal_handler(int signal)
+{
+	g_shutdown_signal.store(signal);
+}
+#endif
+} // namespace
 
 namespace wivrn::platform
 {
@@ -125,64 +156,113 @@ std::pair<int, int> create_socket_pair()
 #if defined(_WIN32)
 	initialize_networking();
 
-	int listener = (int)socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (listener < 0)
-		throw_socket_error("socketpair: listener");
+	auto bind_loopback = [](int & fd, sockaddr_in & addr) {
+		fd = (int)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		if (fd < 0)
+			throw_socket_error("socketpair: socket");
 
-	sockaddr_in addr{};
-	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	addr.sin_port = 0;
+		addr = {};
+		addr.sin_family = AF_INET;
+		addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		addr.sin_port = 0;
 
-	if (::bind(listener, (sockaddr *)&addr, sizeof(addr)) < 0)
+		if (::bind(fd, (sockaddr *)&addr, sizeof(addr)) < 0)
+		{
+			close_socket(fd);
+			throw_socket_error("socketpair: bind");
+		}
+
+		socklen_t addr_len = sizeof(addr);
+		if (getsockname(fd, (sockaddr *)&addr, &addr_len) < 0)
+		{
+			close_socket(fd);
+			throw_socket_error("socketpair: getsockname");
+		}
+	};
+
+	int first = -1;
+	int second = -1;
+	sockaddr_in first_addr{};
+	sockaddr_in second_addr{};
+
+	try
 	{
-		close_socket(listener);
-		throw_socket_error("socketpair: bind");
+		bind_loopback(first, first_addr);
+		bind_loopback(second, second_addr);
+
+		if (::connect(first, (sockaddr *)&second_addr, sizeof(second_addr)) < 0)
+			throw_socket_error("socketpair: connect");
+		if (::connect(second, (sockaddr *)&first_addr, sizeof(first_addr)) < 0)
+			throw_socket_error("socketpair: connect");
+	}
+	catch (...)
+	{
+		if (first >= 0)
+			close_socket(first);
+		if (second >= 0)
+			close_socket(second);
+		throw;
 	}
 
-	socklen_t addr_len = sizeof(addr);
-	if (getsockname(listener, (sockaddr *)&addr, &addr_len) < 0)
-	{
-		close_socket(listener);
-		throw_socket_error("socketpair: getsockname");
-	}
-
-	if (::listen(listener, 1) < 0)
-	{
-		close_socket(listener);
-		throw_socket_error("socketpair: listen");
-	}
-
-	int client = (int)socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (client < 0)
-	{
-		close_socket(listener);
-		throw_socket_error("socketpair: client");
-	}
-
-	if (::connect(client, (sockaddr *)&addr, sizeof(addr)) < 0)
-	{
-		close_socket(client);
-		close_socket(listener);
-		throw_socket_error("socketpair: connect");
-	}
-
-	int server = (int)::accept(listener, nullptr, nullptr);
-	close_socket(listener);
-
-	if (server < 0)
-	{
-		close_socket(client);
-		throw_socket_error("socketpair: accept");
-	}
-
-	return {client, server};
+	return {first, second};
 #else
 	int fds[2];
 	if (::socketpair(AF_UNIX, SOCK_DGRAM, 0, fds) < 0)
 		throw_socket_error("socketpair");
 	return {fds[0], fds[1]};
 #endif
+}
+
+bool can_fork()
+{
+#if defined(_WIN32)
+	return false;
+#else
+	return true;
+#endif
+}
+
+process_id fork_process()
+{
+#if defined(_WIN32)
+	throw std::logic_error("fork_process is not available on Windows");
+#else
+	pid_t pid = fork();
+	if (pid < 0)
+		throw std::system_error(errno, std::generic_category(), "fork");
+	return pid;
+#endif
+}
+
+void detach_session()
+{
+#if !defined(_WIN32)
+	setsid();
+#endif
+}
+
+void install_shutdown_handler()
+{
+#if defined(_WIN32)
+	SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+#else
+	struct sigaction action{};
+	action.sa_handler = shutdown_signal_handler;
+	sigemptyset(&action.sa_mask);
+	action.sa_flags = 0;
+	sigaction(SIGINT, &action, nullptr);
+	sigaction(SIGTERM, &action, nullptr);
+#endif
+}
+
+bool shutdown_requested()
+{
+	return g_shutdown_signal.load() != 0;
+}
+
+int shutdown_signal_number()
+{
+	return g_shutdown_signal.load();
 }
 
 process_id current_process_id()

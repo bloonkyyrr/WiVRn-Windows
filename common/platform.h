@@ -32,6 +32,9 @@
 #include <vector>
 
 #if defined(_WIN32)
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -123,7 +126,10 @@ std::pair<int, int> create_socket_pair();
 void initialize_networking();
 
 /// Process helpers.
+bool can_fork();
 process_id current_process_id();
+process_id fork_process();
+void detach_session();
 bool process_exists(process_id pid);
 void terminate_process(process_id pid, bool force);
 void terminate_process_group(process_id pid, bool force);
@@ -144,6 +150,11 @@ bool wait_process(process_id pid, int & status);
 int process_exit_code(int status);
 bool process_terminated_by_signal(int status);
 std::string process_signal_name(int status);
+
+/// Process-wide shutdown requests (SIGINT/SIGTERM on POSIX, console ctrl events on Windows).
+void install_shutdown_handler();
+bool shutdown_requested();
+int shutdown_signal_number();
 
 /// User directories, following XDG on POSIX and the standard Windows folders.
 std::filesystem::path home_directory();

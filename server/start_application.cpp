@@ -162,11 +162,12 @@ void forked_children::start_application(const std::vector<std::string> & args, c
 	        application_pid,
 	        [](process_id pid, int status, void * self_) {
 		        auto self = (forked_children *)self_;
-		        bool empty;
+		        bool was_empty;
+		        bool is_empty;
 		        unsigned int kill_watch = 0;
 		        {
 			        std::lock_guard lock(self->mutex);
-			        empty = self->children.empty();
+			        was_empty = self->children.empty();
 			        auto node = self->children.extract(pid);
 			        if (not node)
 			        {
@@ -177,12 +178,13 @@ void forked_children::start_application(const std::vector<std::string> & args, c
 				        g_source_remove(node.mapped().child);
 				        kill_watch = node.mapped().kill;
 			        }
+			        is_empty = self->children.empty();
 		        }
 		        display_child_status(status, "Application");
 		        if (kill_watch)
 			        g_source_remove(kill_watch);
 
-		        if (self->state_changed_cb and not empty)
+		        if (self->state_changed_cb and is_empty and not was_empty)
 			        self->state_changed_cb();
 	        },
 	        this);
