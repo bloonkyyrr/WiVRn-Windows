@@ -33,6 +33,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -47,6 +50,15 @@
 #endif
 #ifndef SHUT_RDWR
 #define SHUT_RDWR SD_BOTH
+#endif
+#ifndef POLLIN
+#define POLLIN 0x0100
+#endif
+#ifndef POLLHUP
+#define POLLHUP 0x0002
+#endif
+#ifndef POLLERR
+#define POLLERR 0x0008
 #endif
 #else
 #include <fcntl.h>

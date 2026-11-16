@@ -24,16 +24,14 @@
 #include "smp.h"
 #include "wivrn_ipc.h"
 #include "wivrn_packets.h"
+#include "platform.h"
+
 #include <algorithm>
 #include <chrono>
 #include <regex>
 #include <variant>
-#if defined(_WIN32)
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
+#if !defined(_WIN32)
 #include <arpa/inet.h>
-#include <poll.h>
 #include <sys/socket.h>
 #endif
 
@@ -78,7 +76,7 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 	socklen_t len = sizeof(server_address);
 	if (getsockname(control.get_fd(), (sockaddr *)&server_address, &len) < 0)
 	{
-		throw std::system_error(errno, std::system_category(), "Cannot get socket port");
+		platform::throw_socket_error("Cannot get socket port");
 	}
 	int port = ntohs(((struct sockaddr_in6 *)&server_address)->sin6_port);
 
@@ -86,7 +84,7 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 	len = sizeof(client_address);
 	if (getpeername(control.get_fd(), (sockaddr *)&client_address, &len) < 0)
 	{
-		throw std::system_error(errno, std::system_category(), "Cannot get client address");
+		platform::throw_socket_error("Cannot get client address");
 	}
 
 	if (configuration().tcp_only)
@@ -125,9 +123,9 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 			fds[2].fd = wivrn_ipc_socket_monado->get_fd();
 
 			// Make sure tick() is called at least every 100ms
-			int r = ::poll(fds, std::size(fds), 100);
+			int r = platform::poll_sockets(fds, std::size(fds), 100);
 			if (r < 0)
-				throw std::system_error(errno, std::system_category());
+				platform::throw_socket_error("poll");
 
 			if (allow_stream_socket and (fds[0].revents & (POLLHUP | POLLERR)))
 				throw std::runtime_error("Error on stream socket");
@@ -302,9 +300,9 @@ void wivrn::wivrn_connection::reset(std::stop_token stop, TCP && tcp, std::funct
 void wivrn::wivrn_connection::shutdown()
 {
 	if (stream)
-		::shutdown(stream.get_fd(), SHUT_RDWR);
+		platform::shutdown_socket(stream.get_fd());
 	if (control)
-		::shutdown(control.get_fd(), SHUT_RDWR);
+		platform::shutdown_socket(control.get_fd());
 }
 
 std::optional<wivrn::from_headset::packets> wivrn::wivrn_connection::poll_control(int timeout)
@@ -313,9 +311,9 @@ std::optional<wivrn::from_headset::packets> wivrn::wivrn_connection::poll_contro
 	fds.events = POLLIN;
 	fds.fd = control.get_fd();
 
-	int r = ::poll(&fds, 1, timeout);
+	int r = platform::poll_sockets(&fds, 1, timeout);
 	if (r < 0)
-		throw std::system_error(errno, std::system_category());
+		platform::throw_socket_error("poll");
 
 	if (r > 0 && (fds.revents & POLLIN))
 	{
