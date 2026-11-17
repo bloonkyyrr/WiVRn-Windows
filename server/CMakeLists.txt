@@ -93,7 +93,10 @@ set(XRT_IPC_MSG_SOCK_FILENAME     "wivrn/comp_ipc" CACHE STRING "Service socket 
 set(XRT_IPC_SERVICE_PID_FILENAME  "wivrn.pid"      CACHE STRING "Service pidfile filename")
 set(XRT_OXR_RUNTIME_SUFFIX        "wivrn"          CACHE STRING "OpenXR client library suffix")
 
-FetchContent_MakeAvailable(monado)
+# monado was populated and patched unconditionally in the top-level CMakeLists.txt;
+# add it here (after the XRT_FEATURE_* options are set) instead of
+# FetchContent_MakeAvailable, which is stamp-gated and would skip patching.
+add_subdirectory("${monado_SOURCE_DIR}" "${monado_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
 if (WIVRN_BUILD_SERVER)
 	add_executable(wivrn-server

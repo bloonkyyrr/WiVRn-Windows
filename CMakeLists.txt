@@ -216,9 +216,12 @@ FetchContent_Declare(libktx        EXCLUDE_FROM_ALL SYSTEM URL https://github.co
 FetchContent_Declare(implot        EXCLUDE_FROM_ALL SYSTEM URL https://github.com/epezent/implot/releases/download/v1.0/implot-v1.0.tar.gz
                                    URL_HASH SHA256=20ca14d5a46f36a650746096c74eba8bea99c9432cd3c877343b96b17a6ae566)
 file(GLOB IMGUI_PATCHES CONFIGURE_DEPENDS patches/imgui/*)
+# Hash apply.cmake so the FetchContent stamp changes whenever the patch logic
+# changes: otherwise a cached source tree is never re-patched.
+file(SHA256 "${CMAKE_CURRENT_LIST_DIR}/patches/apply.cmake" APPLY_CMAKE_HASH)
 FetchContent_Declare(imgui         EXCLUDE_FROM_ALL SYSTEM URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9.tar.gz
                                    URL_HASH SHA256=af97ed649182c39314320514a672b82008ab462b9293fe23d37b30bfa5d05519
-                                   PATCH_COMMAND    "${CMAKE_COMMAND}" "-DPATCHES=${IMGUI_PATCHES}" -P "${CMAKE_CURRENT_LIST_DIR}/patches/apply.cmake"
+                                   PATCH_COMMAND    "${CMAKE_COMMAND}" "-DPATCHES=${IMGUI_PATCHES}" "-DAPPLY_CMAKE_HASH=${APPLY_CMAKE_HASH}" -P "${CMAKE_CURRENT_LIST_DIR}/patches/apply.cmake"
 )
 FetchContent_Declare(uni-algo      EXCLUDE_FROM_ALL SYSTEM URL https://github.com/uni-algo/uni-algo/archive/v1.2.0.tar.gz
                                    URL_HASH SHA256=f2a1539cd8635bc6088d05144a73ecfe7b4d74ee0361fabed6f87f9f19e74ca9)
@@ -236,9 +239,22 @@ file(STRINGS monado-rev MONADO_REV)
 FetchContent_Declare(monado
     GIT_REPOSITORY   https://gitlab.freedesktop.org/monado/monado.git
     GIT_TAG          ${MONADO_REV}
-    PATCH_COMMAND    "${CMAKE_COMMAND}" "-DPATCHES=${MONADO_PATCHES}" -P "${CMAKE_CURRENT_LIST_DIR}/patches/apply.cmake"
     EXCLUDE_FROM_ALL
 )
+# Populate (stamp-gated, may skip on a cached tree) then patch unconditionally:
+# FetchContent's stamp-gated PATCH_COMMAND is not re-run on a cached,
+# possibly half-patched source tree, which left 0013 unapplied in CI.
+FetchContent_Populate(monado)
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DPATCHES=${MONADO_PATCHES}" "-DAPPLY_CMAKE_HASH=${APPLY_CMAKE_HASH}" -P "${CMAKE_CURRENT_LIST_DIR}/patches/apply.cmake"
+    WORKING_DIRECTORY "${monado_SOURCE_DIR}"
+    RESULT_VARIABLE _monado_patch_result
+)
+if(NOT _monado_patch_result EQUAL 0)
+    message(FATAL_ERROR "Failed to patch monado")
+endif()
+# add_subdirectory is done in server/CMakeLists.txt, after the XRT_FEATURE_*
+# options are set (monado_SOURCE_DIR/BINARY_DIR are already populated here).
 
 add_custom_target(wivrn-version ALL
     COMMAND ${CMAKE_COMMAND}

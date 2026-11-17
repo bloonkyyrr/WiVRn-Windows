@@ -25,6 +25,21 @@ if(EXISTS "${source_dir}/.git")
 	set(is_repository TRUE)
 endif()
 
+# FetchContent reuses a cached source tree, which may be left partially patched
+# by an earlier (possibly failed) run: a half-patched tree makes patches report
+# "already applied" without changing anything, or apply with fuzz. Reset git
+# checkouts to their pristine state first so every run starts from a clean tree.
+if(is_repository AND GIT_EXECUTABLE)
+	execute_process(
+		COMMAND "${GIT_EXECUTABLE}" reset --hard
+		WORKING_DIRECTORY "${source_dir}"
+		OUTPUT_QUIET ERROR_QUIET)
+	execute_process(
+		COMMAND "${GIT_EXECUTABLE}" clean -fdx
+		WORKING_DIRECTORY "${source_dir}"
+		OUTPUT_QUIET ERROR_QUIET)
+endif()
+
 # Somewhere outside the source tree for normalised patch copies.
 set(temp_dir "$ENV{TEMP}")
 if("${temp_dir}" STREQUAL "")
