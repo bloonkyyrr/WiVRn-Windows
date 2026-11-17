@@ -19,14 +19,17 @@
 
 #include "steam_info.h"
 #include "vdf.h"
-#include "xdg_base_directory.h"
 #include <bit>
+#include <cctype>
 #include <charconv>
 #include <cstring>
 #include <format>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <regex>
+#include <string_view>
+#include <windows.h>
 
 namespace
 {
@@ -135,10 +138,78 @@ void read_dict(binary_reader & in, T & visitor, const std::vector<std::string> *
 	}
 }
 
-std::filesystem::path home()
+bool iequals(std::string_view a, std::string_view b)
 {
-	auto home = std::getenv("HOME");
-	return home ? home : "";
+	if (a.size() != b.size())
+		return false;
+
+	for (size_t i = 0; i < a.size(); ++i)
+	{
+		if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+			return false;
+	}
+	return true;
+}
+
+struct registry_location
+{
+	HKEY root;
+	const char * subkey;
+	const char * name;
+};
+
+std::filesystem::path steam_path_from_registry()
+{
+	for (const auto & location: {
+	             registry_location{HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath"},
+	             registry_location{HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Valve\\Steam", "InstallPath"},
+	             registry_location{HKEY_LOCAL_MACHINE, "SOFTWARE\\Valve\\Steam", "InstallPath"},
+	     })
+	{
+		char buffer[MAX_PATH * 2]{};
+		DWORD size = sizeof(buffer);
+		if (RegGetValueA(location.root, location.subkey, location.name, RRF_RT_REG_SZ, nullptr, buffer, &size) != ERROR_SUCCESS)
+			continue;
+		if (buffer[0] == '\0')
+			continue;
+		return std::filesystem::path(buffer);
+	}
+	return {};
+}
+
+/// Library folders declared in steamapps/libraryfolders.vdf, primary install included.
+std::vector<std::filesystem::path> steam_library_folders(const std::filesystem::path & root)
+{
+	std::vector<std::filesystem::path> result;
+	if (root.empty())
+		return result;
+
+	std::ifstream file(root / "steamapps" / "libraryfolders.vdf");
+	if (not file)
+		return result;
+
+	std::string content{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+
+	static const std::regex path_entry(R"re("path"[ 	]*"((?:[^"\]|\.)*)")re");
+	for (auto it = std::sregex_iterator(content.begin(), content.end(), path_entry); it != std::sregex_iterator(); ++it)
+	{
+		std::string value = (*it)[1].str();
+		std::string unescaped;
+		unescaped.reserve(value.size());
+		for (size_t i = 0; i < value.size(); ++i)
+		{
+			if (value[i] == '\\' and i + 1 < value.size())
+				unescaped += value[++i];
+			else
+				unescaped += value[i];
+		}
+
+		auto path = std::filesystem::path(unescaped);
+		if (not path.empty())
+			result.push_back(std::move(path));
+	}
+
+	return result;
 }
 
 std::optional<uint32_t> guess_steam_userid(const std::filesystem::path & root)
@@ -208,10 +279,8 @@ void read_steam_icons(std::filesystem::path path, std::unordered_map<uint32_t, w
 		}
 		void on_string(const std::string & key, std::string && val)
 		{
-			if (strcasecmp(key.c_str(), "clienticon") == 0)
+			if (iequals(key, "clienticon"))
 				current.clienticon = std::move(val);
-			else if (strcasecmp(key.c_str(), "linuxclienticon") == 0)
-				current.linuxclienticon = std::move(val);
 		}
 		void on_uint32_t(const std::string & key, uint32_t val)
 		{
@@ -241,7 +310,7 @@ void read_steam_icons(std::filesystem::path path, std::unordered_map<uint32_t, w
 		{
 			V v;
 			read_dict(in, v, string_table_ptr);
-			if (not(v.current.clienticon.empty() and v.current.linuxclienticon.empty()))
+			if (not v.current.clienticon.empty())
 				icons.emplace(app_id, std::move(v.current));
 		}
 		catch (...)
@@ -307,9 +376,9 @@ void read_steam_shortcuts(
 		{
 			if (depth == 1)
 			{
-				if (strcasecmp(key.c_str(), "AppName") == 0)
+				if (iequals(key, "AppName"))
 					current.name[""] = std::move(val);
-				else if (strcasecmp(key.c_str(), "icon") == 0 and not val.empty())
+				else if (iequals(key, "icon") and not val.empty())
 					icon = std::move(val);
 			}
 		}
@@ -317,9 +386,9 @@ void read_steam_shortcuts(
 		{
 			if (depth == 1)
 			{
-				if (strcasecmp(key.c_str(), "appid") == 0)
+				if (iequals(key, "appid"))
 					current.appid = val;
-				else if (strcasecmp(key.c_str(), "OpenVR") == 0)
+				else if (iequals(key, "OpenVR"))
 					VR = val;
 			}
 		}
@@ -328,9 +397,8 @@ void read_steam_shortcuts(
 	read_dict(in, v);
 }
 
-wivrn::steam::steam(std::filesystem::path root, bool flatpak) :
+wivrn::steam::steam(std::filesystem::path root) :
         root(std::move(root)),
-        flatpak(flatpak),
         default_userid(guess_steam_userid(this->root))
 {
 }
@@ -338,32 +406,40 @@ wivrn::steam::steam(std::filesystem::path root, bool flatpak) :
 std::vector<wivrn::steam> wivrn::steam::find_installations()
 {
 	std::vector<wivrn::steam> res;
-	auto h = home();
 
-	auto try_construct = [&res](std::filesystem::path root, bool flatpak = false) {
+	auto try_construct = [&res](const std::filesystem::path & root) {
 		try
 		{
-			if (std::filesystem::exists(root))
+			if (not root.empty() and std::filesystem::exists(root))
 			{
-				res.push_back(wivrn::steam(std::move(root), flatpak));
+				res.push_back(wivrn::steam(root));
 				return true;
 			}
 		}
-		catch (std::exception &)
+		catch (const std::exception &)
 		{
 		}
 		return false;
 	};
 
-	// Flatpak Steam
-	try_construct(h / ".var/app/com.valvesoftware.Steam/.steam/steam", true);
+	// The official installer records the location in the registry; portable and
+	// SteamCMD installs fall back to the default directory.
+	std::filesystem::path primary = steam_path_from_registry();
+	if (primary.empty())
+	{
+		if (const char * program_files = std::getenv("ProgramFiles(x86)"); program_files and *program_files)
+			primary = std::filesystem::path(program_files) / "Steam";
+	}
 
-	// Debian Steam (accessed from flatpak)
-	try_construct(h / ".steam/debian-installation")
-	        // system Steam
-	        or try_construct(xdg_data_home() / "Steam")
-	        // system Steam (accessed from flatpak)
-	        or try_construct(h / ".local/share/Steam");
+	try_construct(primary);
+
+	// Additional libraries only hold steamapps/, but they are enumerated so that
+	// games installed outside the primary directory are visible.
+	for (const auto & library: steam_library_folders(primary))
+	{
+		if (library != primary)
+			try_construct(library);
+	}
 
 	return res;
 }
@@ -481,16 +557,13 @@ std::optional<std::filesystem::path> wivrn::steam::get_icon(uint64_t appid)
 	if (std::filesystem::exists(icon_path))
 		return icon_path;
 
-	icon_path = root / "steam/games" / (it->second.linuxclienticon + ".zip");
-	if (std::filesystem::exists(icon_path))
-		return icon_path;
-
 	return {};
 }
 
 std::string wivrn::steam::get_steam_command() const
 {
-	if (flatpak)
-		return "flatpak run com.valvesoftware.Steam";
+	auto executable = root / "steam.exe";
+	if (std::filesystem::exists(executable))
+		return "\"" + executable.string() + "\"";
 	return "steam";
 }

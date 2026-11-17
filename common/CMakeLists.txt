@@ -13,9 +13,7 @@ add_library(wivrn-common-base STATIC EXCLUDE_FROM_ALL
     utils/xdg_base_directory.cpp
     ${CMAKE_BINARY_DIR}/version.cpp
 )
-if(WIN32)
-    target_link_libraries(wivrn-common-base PUBLIC ws2_32)
-endif()
+target_link_libraries(wivrn-common-base PUBLIC ws2_32)
 add_dependencies(wivrn-common-base wivrn-version)
 
 add_library(wivrn-common STATIC EXCLUDE_FROM_ALL
@@ -30,22 +28,18 @@ add_library(wivrn-common STATIC EXCLUDE_FROM_ALL
     vk/vk_mem_alloc.cpp
 )
 
-if (WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_SERVER)
+if (WIVRN_BUILD_SERVER)
     add_library(wivrn-common-server STATIC EXCLUDE_FROM_ALL
         application.cpp
-        utils/flatpak.cpp
         utils/load_icon.cpp
         utils/ini.cpp
         utils/steam_info.cpp
         utils/vdf.cpp
-        utils/xdg_icon_lookup.cpp
     )
     target_link_libraries(wivrn-common-server
         PRIVATE nlohmann_json::nlohmann_json PNG::PNG LibArchive::LibArchive Boost::iostreams
         PUBLIC wivrn-common-base)
-    if (WIVRN_USE_LIBRSVG)
-        target_link_libraries(wivrn-common-server PRIVATE PkgConfig::librsvg-2.0)
-    endif()
+    target_link_libraries(wivrn-common-server PRIVATE ole32 shell32 uuid windowscodecs)
 
     if (WIVRN_BUILD_TEST)
         add_executable(list-apps

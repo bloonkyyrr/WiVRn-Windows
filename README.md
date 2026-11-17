@@ -10,9 +10,13 @@
 
 # About
 
-WiVRn is an application that wirelessly streams a virtual reality game to a standalone VR headset from a <b>WINDOWS</b> PC, FUCK LINUX.
+WiVRn is an application that wirelessly streams a virtual reality game to a standalone VR headset from a **Windows** PC.
 
-WiVRn support a wide range of VR devices:
+The PC side runs as the OpenXR runtime for the applications it launches: the game renders
+locally, WiVRn encodes each frame and streams it to the headset, and tracking, audio and
+input travel back over the same connection.
+
+WiVRn supports a wide range of VR devices:
 
 | Headset | Supported | Notes |
 |:--------:|:--------:|:--------:|
@@ -31,33 +35,30 @@ WiVRn support a wide range of VR devices:
 | Non-Android VR | ✖ | Not Android |
 | Non-VR Android | ✖ | VR required |
 
-<sup>A Linux client does exist, only for debugging. It has no audio or hardware decoding.</sup>
+# Requirements
+
+- Windows 10 or 11, x64
+- A GPU with Vulkan 1.3 support. Hardware encoding uses NVENC on NVIDIA cards or the
+  Vulkan video extensions; x264 software encoding is the fallback
+- A headset on the same network as the PC (or connected over USB with `adb reverse`)
 
 # Getting started
 
+## PC Server
 
-## PC Server/Dashboard
+WiVRn is built for Windows 10/11 x64. Download the installer from the release page, or
+[build it yourself](docs/windows.md#building).
 
-We recommend using native packages if available for your distribution:
-- [Arch User Repository](https://aur.archlinux.org/packages/wivrn-dashboard)
-- [Fedora](https://packages.fedoraproject.org/pkgs/wivrn/wivrn/)
-- [Gentoo Guru](https://gitweb.gentoo.org/repo/proj/guru.git/tree/media-libs/wivrn)
-- [NixOS](https://search.nixos.org/packages?show=wivrn)
-- [Ubuntu PPA](https://launchpad.net/~lvra/+archive/ubuntu/wivrn)
+The installer places `wivrn-server.exe`, the WiVRn OpenXR runtime and
+`openxr_wivrn.json` in the same directory and creates a Start Menu shortcut.
 
-For OpenVR and Steam compatibility, you also need a compatibility library such as [xrizer](https://github.com/Supreeeme/xrizer/) or [OpenComposite](https://gitlab.com/znixian/OpenOVR/).
-
-A Flatpak is available on Flathub for all distributions:
-
-[![Flathub](https://flathub.org/api/badge)](https://flathub.org/apps/io.github.wivrn.wivrn)
-
-The Flatpak contains both xrizer and OpenComposite.
-
-Note that due to Flatpak sandboxing, some features such as support for SteamVR tracked (Lighthouse) devices, or virtual gamepad/keyboard/input devices forwarded from the headset, may not be available.
+For SteamVR and OpenVR games you also need a compatibility layer such as
+[xrizer](https://github.com/Supreeeme/xrizer/) or [OpenComposite](https://gitlab.com/znixian/OpenOVR/),
+then point `openvr-compat-path` at its directory in the [configuration](docs/configuration.md).
 
 ## Headset Client/App
 
-Follow the wizard in the PC dashboard to install the client on your VR headset.
+Install the client on your VR headset:
 
 It should either lead you to the [Meta Store](https://www.meta.com/experiences/7959676140827574/) (for Meta Quest headsets) or to download the correct APK (for other headsets).
 
@@ -67,97 +68,110 @@ It should either lead you to the [Meta Store](https://www.meta.com/experiences/7
 > [!TIP]
 > If the headset fails to connect to the computer, see [troubleshooting](#troubleshooting).
 
-
-
 # Usage
 
 ## Running
 
 ### Prerequisites
-Avahi must be running:
-```bash
-systemctl enable --now avahi-daemon
-```
 
-On SteamOS, the Avahi configuration needs to be modified to allow user services such as WiVRn to publish services on the network; see https://github.com/WiVRn/WiVRn/issues/1001#issuecomment-4940906113 for instructions on how to do so.
+- WiVRn publishes its service with DNS-SD, which Windows Firewall restricts by
+  default. On first start, allow WiVRn on private networks, or add a rule:
+  ```powershell
+  New-NetFirewallRule -DisplayName "WiVRn" -Direction Inbound -Protocol UDP -LocalPort 9757 -Action Allow
+  New-NetFirewallRule -DisplayName "WiVRn TCP" -Direction Inbound -Protocol TCP -LocalPort 9757 -Action Allow
+  ```
+- The PC and the headset must be on the same network.
 
-- If a firewall is installed, open port 5353/UDP for Avahi and ports 9757/UDP+TCP for WiVRn.
-- For example, if using UFW run `ufw allow 5353/udp` and `ufw allow 9757`.
+### Start the PC server
 
-### Start the PC server process
-The graphical frontend is listed as "WiVRn server" in the application list, and is `wivrn-dashboard` on command line. On first start, a wizard will guide you through the initial steps.
+Run `wivrn-server.exe` (Start Menu: **WiVRn server**). A window shows the connection state,
+and the pairing PIN when a new headset may connect. Its menu disconnects the headset,
+starts pairing, opens the configuration folder, or quits the server.
 
-The actual server for headless usage is `wivrn-server`. When installed through your distribution's package manager, a systemd user service named `wivrn` is also installed, which can be enabled to automatically start on login with `systemctl --user enable --now wivrn`.
-
-For Steam games, depending on the installation method, you may need to set launch options in the Steam properties for each game you want to run. Either the dashboard or command line output will display the launch command if it is required.
+`wivrn-server` runs until you quit it from its window menu. Started from a terminal, the log
+output goes to that console; started from the Start Menu, Windows opens a console window for it.
 
 ### Start the headset application
-On the headset, when installed from the store, simply start `WiVRn`. If you installed the app via the dashboard, or manually via `adb`, it will be in an "unknown sources" section.
 
-On first start, it will ask if you want to enable some features such as microphone, hand tracking, eye tracking, etc., as they will require permissions to be granted. It is possible to grant those later from the Settings tab.
+On the headset, when installed from the store, simply start `WiVRn`. If you installed the app
+via `adb`, it will be in an "unknown sources" section.
+
+On first start, it will ask if you want to enable some features such as microphone, hand tracking,
+eye tracking, etc., as they will require permissions to be granted. It is possible to grant those
+later from the Settings tab.
 
 It is highly recommended to use default settings and only tweak them if you experience issues.
 
 ### Connect to the server
-The headset application will start on a server list. Your computer should be visible and have a connect button. Simply click it to start streaming.
 
-When the headset is connected, wivrn-server sets the OpenXR and OpenVR configuration to use WiVRn. Thus, applications will only be able to run in VR once the headset connection is established. The configuration is reverted once the connection ends and all running VR applications are closed. 
+The headset application will start on a server list. Your computer should be visible and have a
+connect button. Simply click it to start streaming.
 
-The headset connection also triggers the creation of a virtual speaker and, if enabled in the headset app settings, a microphone. You will have to set them as the default output and input devices in your system audio configuration. This setting persists to future sessions until you change the defaults to other devices.
+The first time a headset connects it is unknown to the server: the server window shows a
+pairing PIN, enter it in the headset app. Paired headsets are remembered in
+`%APPDATA%\wivrn\known_keys.json` and reconnect without a PIN.
+
+When the headset is connected, the server registers itself as the active OpenXR runtime for the
+applications it launches, so VR applications only work while a session is running.
 
 ### Start an application
-When the headset is connected and no XR application is running, it will show an application launcher. Applications in that list are sourced from:
-- Steam games that are flagged as VR. Steam may need to be restarted for the list to be updated when new games are installed.
-- .desktop files that contain `X-WiVRn-VR` in the `Categories` section. Files are searched in [standard locations](https://specifications.freedesktop.org/desktop-entry/latest/file-naming.html#desktop-file-id) which usually include `~/.local/share/applications` and `/usr/share/applications/`.
 
-You can set an application to be started automatically when your headset is connected, in the dashboard settings or [manually](docs/configuration.md#application).
+When the headset is connected and no XR application is running, it will show an application launcher.
+Applications in that list are sourced from:
 
-## Steam Flatpak
-Flatpak applications are only able to access the Flatpak version of WiVRn.
+- Steam games that are flagged as VR (the `config/steamapps.vrmanifest` of your Steam installation,
+  including library folders declared in `libraryfolders.vdf`).
+- Start Menu shortcuts whose target is an executable.
 
-If you're using the Steam Flatpak, you'll need to grant read only access to the following paths:
-
-```bash
-flatpak override \
-  --filesystem=xdg-run/wivrn:ro \
-  --filesystem=xdg-data/flatpak/app/io.github.wivrn.wivrn:ro \
-  --filesystem=/var/lib/flatpak/app/io.github.wivrn.wivrn:ro \
-  --filesystem=xdg-config/openxr:ro \
-  --filesystem=xdg-config/openvr:ro \
-  com.valvesoftware.Steam
-```
-
-When using a user installation of flatpak Steam, use `override --user` instead of `override`.
-
-The same overrides should work for other VR applications distributed as Flatpaks.
+You can set an application to be started automatically when your headset is connected in
+[the configuration](docs/configuration.md#application).
 
 # Building
 
-See [building](docs/building.md) for building the [dashboard](docs/building.md#dashboard), [server (PC)](docs/building.md#server-pc), and [client (headset)](docs/building.md#client-headset)
+A source build needs Visual Studio 2022 (C++23 toolset), the Vulkan SDK 1.4.304 or newer, and a
+[vcpkg](https://vcpkg.io/) checkout with `VCPKG_ROOT` set. vcpkg installs the dependencies
+declared in `vcpkg.json` on the first configure.
 
+```powershell
+cmake --preset windows
+cmake --build --preset windows
+```
+
+From an "x64 Native Tools" prompt, Ninja works too: use the `windows-ninja` preset for both
+steps, which writes to `build-windows-ninja` instead of `build-windows`. With the Visual Studio
+generator the outputs sit in `build-windows\RelWithDebInfo`; `cpack --preset windows` turns
+them into the NSIS installer.
+
+See [building on Windows](docs/windows.md#building) for the full requirements, the installed
+layout, and the OpenVR/OpenXR runtime registration.
 
 # Configuration
-Most settings are controlled through the headset app, while the server has configuration for items that are specific to the server. Use the dashboard to edit the latter, or see [configuration](docs/configuration.md) for editing it manually.
+
+Most settings are controlled through the headset app. Server-specific settings live in
+`%APPDATA%\wivrn\config.json`; see [configuration](docs/configuration.md).
 
 # Troubleshooting
+
 <details><summary>My computer is not seen by the headset</summary>
 
 If the server list is empty in the headset app:
 - Make sure your computer is connected on the same network as your headset
-- Check that avahi is running with `systemctl status avahi-daemon`, if it is not, enable it with `systemctl enable --now avahi-daemon`
-- If you have a firewall, check that port 5353 (UDP) is open</details>
+- Check that Windows Firewall allows `wivrn-server.exe` on private networks
+- Check that `publish-service` in [the configuration](docs/configuration.md#publish-service)
+  is not set to `none`
+- Make sure no other process is bound to port 9757</details>
 
 <details><summary>My headset does not connect to my computer</summary>
   
-- If you have a firewall, check that port 9757 (UDP and TCP) is open
+- Make sure inbound UDP and TCP 9757 are allowed in Windows Firewall
 - The server and client must be the same version.</details>
 
 <details><summary>How do I use a wired connection manually?</summary>
 
-- Make sure the WiVRn Server is installed and running on your computer
+- Make sure WiVRn is installed and running on your computer
 - Make sure you have the WiVRn app installed on your headset
-- After starting the "WiVRn Server" on your computer and ensuring your device is connected to your PC via cable, run the following in your terminal (Note: using `adb` on some devices may require developer mode to be enabled):
-   - ```bash
+- With the device connected by cable, run in a terminal (using `adb` may require developer mode):
+   - ```powershell
       adb reverse tcp:9757 tcp:9757
       adb shell am start -a android.intent.action.VIEW -d "wivrn+tcp://localhost" org.meumeu.wivrn
       ```
@@ -166,18 +180,12 @@ If the server list is empty in the headset app:
       - `org.meumeu.wivrn.github.nighly` for Github nightlies (wirvn-apk [repository](https://github.com/WiVRn/WiVRn-APK/releases))
       - `org.meumeu.wivrn.github.testing` for Github CI builds
       - `org.meumeu.wivrn.local` for developer builds
-- You can now continue the pairing process as documented in the running section.</details>
+- Pair the headset as described in [connect to the server](#connect-to-the-server).</details>
 
-<details><summary>How do I see server logs when using the dashboard?</summary>
+<details><summary>Where are the logs?</summary>
 
-- Click **Troubleshoot > Open server logs**
-- Or, navigate to `${XDG_STATE_HOME}/wivrn/wivrn-dashboard`
-  - In other words, on common setups, the dashboard writes logs to `~/.local/state/wivrn/wivrn-dashboard`
-  - For WiVRn Flatpak, the dashboard writes logs to `~/.var/app/io.github.wivrn.wivrn/.local/state/wivrn/wivrn-dashboard`</details>
-
-<details><summary>My NVIDIA GPU P-State is limited to P2 instead of reaching the highest P0 while using the NVIDIA NVENC encoder</summary>
-    
-- See [nvenc](docs/nvenc.md) for troubleshooting.</details>
+- The server logs to its console window
+- From the install directory in PowerShell, keep a copy with `.\wivrn-server.exe > wivrn.log 2>&1`</details>
 
 <details><summary>I have high motion latency, black borders following my view, hear corrupted audio or see a corrupted, pixelated image</summary>
 
@@ -198,33 +206,31 @@ We are available on either **Discord** or **Matrix space**:
 
 Please use the `wivrn` chat room for questions or issues specific to WiVRn.
 
-
 # Contributing
 
 ## Translations
 
 See [translating](docs/translating.md) for procedure.
 
-
 # Credits
 WiVRn uses the following software:
 - [ambientCG](https://ambientcg.com/)
-- [Avahi](https://www.avahi.org/)
 - [Boost.Locale](https://github.com/boostorg/locale)
 - [Boost.PFR](https://github.com/boostorg/pfr)
 - [CLI11](https://github.com/CLIUtils/CLI11)
 - [Dear ImGui](https://github.com/ocornut/imgui)
 - [fastgltf](https://github.com/spnda/fastgltf)
-- [ffmpeg](https://ffmpeg.org/) optional, for hardware encoding on AMD/Intel
 - [FreeType](https://freetype.org/)
 - [glm](http://glm.g-truc.net/)
 - [HarfBuzz](https://harfbuzz.github.io/)
-- [librsvg](https://wiki.gnome.org/Projects/LibRsvg)
+- [libarchive](https://libarchive.org/)
+- [libpng](http://www.libpng.org/pub/png/)
 - [Monado](https://monado.freedesktop.org/)
+- [nlohmann/json](https://github.com/nlohmann/json)
 - [nvenc](https://developer.nvidia.com/nvidia-video-codec-sdk) optional, for hardware encoding on NVIDIA
-- [qCoro](https://qcoro.dev/)
-- [Qt 6](https://www.qt.io/) optional, for the dashboard
+- [OpenSSL](https://www.openssl.org/)
 - [spdlog](https://github.com/gabime/spdlog)
 - [VulkanMemoryAllocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
+- [Vulkan](https://www.vulkan.org/)
 - [WebXR input profiles](https://www.npmjs.com/package/@webxr-input-profiles/motion-controllers)
 - [x264](https://www.videolan.org/developers/x264.html) optional, for software encoding

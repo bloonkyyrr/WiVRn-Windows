@@ -5,171 +5,68 @@ on:
   pull_request:
 
 env:
-  BUILD_TYPE: Release
-  SERVER_DEPS: libx264-dev libavcodec-dev libavutil-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev nlohmann-json3-dev librsvg2-dev libdrm-dev libglib2.0-dev-bin libpipewire-0.3-dev libcli11-dev libnotify-dev libarchive-dev libudev-dev
+  BUILD_TYPE: RelWithDebInfo
 
 jobs:
-  build-linux:
-    name: Linux
-    runs-on: ubuntu-26.04
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
     if: ${{ vars.APK_ONLY == '' }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        config:
-          - preset: 'client-no-system-boost'
-            packages: libharfbuzz-dev libfreetype-dev libavcodec-dev libavutil-dev libswscale-dev librsvg2-bin gettext libcurl4-openssl-dev libfontconfig-dev libpipewire-0.3-dev
-          - preset: 'dashboard'
-            packages: extra-cmake-modules libarchive-dev libboost-all-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev libkirigami-dev librsvg2-dev nlohmann-json3-dev qcoro-qt6-dev qml6-module-org-kde-kirigamiaddons-formcard
-          - preset: 'dissector-no-system-boost'
-            packages: libboost-all-dev wireshark-dev
-          - preset: 'server'
-            packages: libboost-all-dev libsystemd-dev
-        # tracing is opt-in and rarely built; build it here so the instrumentation and the
-        # Perfetto SDK glue don't bitrot (WIVRN_TRACE_MONADO needs percetto, not packaged in CI)
-          - preset: 'server-tracing'
-            packages: libboost-all-dev libsystemd-dev
-          - preset: 'server-no-systemd'
-            packages: libboost-all-dev
-          - preset: 'server-no-system-boost'
-            packages: libsystemd-dev
 
     steps:
     - uses: actions/checkout@v6
-
-    - name: Apt dependencies
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
       with:
-        packages: ccache libvulkan-dev glslang-tools spirv-tools libwayland-dev libxrandr-dev ${{matrix.config.packages}} ${{ startsWith(matrix.config.preset, 'server') && env.SERVER_DEPS || ''}}
-
-    - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2.23
-      with:
-        key: linux-${{matrix.config.preset}}
-        job-summary: ""
-        restore-keys: linux-
+        fetch-depth: 0
 
     - uses: actions/cache@v5
       with:
-        key: cmake-linux-${{matrix.config.preset}}
+        key: cmake-windows-${{ hashFiles('CMakeLists.txt', 'vcpkg.json', 'monado-rev', 'patches/**') }}
         path: |
           ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.tar.*
           ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.zip
-          ${{github.workspace}}/cmake-fetch/*.tar.*
-          ${{github.workspace}}/cmake-fetch/*.tgz
           ${{github.workspace}}/cmake-fetch/*-src/.git
-        restore-keys: cmake-linux-
+        restore-keys: cmake-windows-
 
-    - name: Install dependencies
-      if: ${{ startswith(matrix.config.preset, 'client') }}
-      run: |
-        wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.2/KTX-Software-4.4.2-Linux-x86_64.deb
-        sudo dpkg --install KTX-Software-4.4.2-Linux-x86_64.deb
-        npm install --global @gltf-transform/cli@4.1.1
+    - name: Install Vulkan SDK
+      uses: humbletim/install-vulkan-sdk@v1.2
+      with:
+        version: 1.4.304.0
+        cache: true
 
-    - name: Fetch Perfetto SDK
-      if: ${{ matrix.config.preset == 'server-tracing' }}
-      # The amalgamated SDK is two files; install them where server/CMakeLists.txt looks.
+    - name: Configure
       env:
-        PERFETTO_TAG: v51.0
-      run: |
-        sudo mkdir -p /usr/share/perfetto/sdk
-        for f in perfetto.h perfetto.cc; do
-          sudo curl -fsSL -o /usr/share/perfetto/sdk/$f \
-            https://raw.githubusercontent.com/google/perfetto/${PERFETTO_TAG}/sdk/$f
-        done
-
-    - name: Configure CMake
-      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
-      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
-      run: >
-        cmake -B ${{github.workspace}}/build
-        -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
-        -DFETCHCONTENT_BASE_DIR=${{github.workspace}}/cmake-fetch
-        -DCMAKE_C_COMPILER_LAUNCHER=ccache
-        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-        --preset ${{ matrix.config.preset }}
-        -DWIVRN_USE_SYSTEM_OPENXR=OFF
-
-    - name: Package build dependencies
-      if: ${{ matrix.config.preset == 'server' }}
-      # For easier packaging, build dependencies are made available as a separate archive
-      run: cd ${{github.workspace}}/cmake-fetch ; tar --create --xz --exclude .git --file ${{github.workspace}}/server-build-deps.tar.xz *-src
+        VCPKG_ROOT: ${{ env.VCPKG_INSTALLATION_ROOT }}
+      run: cmake --preset windows
 
     - name: Build
-      # Build your program with the given configuration
-      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+      run: cmake --build --preset windows
 
-    - name: Publish build dependencies
-      if: ${{ matrix.config.preset == 'server' }}
+    - name: Package
+      run: cpack --config build-windows/CPackConfig.cmake -C ${{ env.BUILD_TYPE }}
+
+    - name: Upload server
       uses: actions/upload-artifact@v7
       with:
-        name: server-build-deps
-        path: server-build-deps.tar.xz
+        name: wivrn-server-windows
+        path: build-windows/bin/*
+        retention-days: 30
 
-    - name: Release build dependencies
-      uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/') && matrix.config.preset == 'server'
+    - name: Upload installer
+      uses: actions/upload-artifact@v7
       with:
-        tag_name: ${{ inputs.ref }}
-        generate_release_notes: true
-        draft: true
-        files: server-build-deps.tar.xz
+        name: wivrn-installer-windows
+        path: build-windows/package/*.exe
+        retention-days: 30
 
-  build-server-flatpak:
-    name: Linux server (flatpak)
-    runs-on: ubuntu-24.04
-    if: ${{ vars.APK_ONLY == '' }}
-    container:
-      # Tag matches runtime-version in the manifest.
-      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
-      options: --privileged
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        fetch-depth: 0
-
-    - name: Create the flatpak manifest
-      run: |
-        git config --global --add safe.directory $(pwd)
-        pip install toml aiohttp
-        tools/gen_flatpak_manifest.py --gitlocal --out flatpak
-        cat flatpak/io.github.wivrn.wivrn.yml
-
-    - uses: flatpak/flatpak-github-actions/flatpak-builder@v6.7
-      with:
-        manifest-path: flatpak/io.github.wivrn.wivrn.yml
-        bundle: wivrn-server.flatpak
-        # The manifest is regenerated on every commit with the git hash embedded,
-        # so its default (manifest-hash) cache key never hits. Key on the files
-        # that actually define the dependency set instead, so the toolchain
-        # downloads and build cache persist across commits.
-        cache-key: flatpak-builder-${{ hashFiles('flatpak/io.github.wivrn.wivrn.yml.in', 'flatpak/ct-ng-x86_64.config', 'flatpak/ct-ng-aarch64.config', 'monado-rev', 'CMakeLists.txt') }}
-
-    - name: Debug bundle
+    - name: Upload build dir
       uses: actions/upload-artifact@v7
       if: failure()
       with:
-        name: flatpak-debug
-        path: .flatpak-builder
-        include-hidden-files: true
-        retention-days: 1
-
-  nix-test:
-    name: Test Nix package and devshell
-    runs-on: ubuntu-24.04
-    if: ${{ vars.APK_ONLY == '' }}
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        fetch-depth: 0
-
-    - uses: cachix/install-nix-action@v31
-    - run: nix flake check
-    - run: nix build --print-build-logs
+        name: windows-build-dir
+        path: |
+          build-windows/CMakeFiles/CMakeConfigureLog.yaml
+          build-windows/CMakeCache.txt
+        retention-days: 3
 
   build-android:
     name: Android
@@ -333,108 +230,14 @@ jobs:
 
         ./ovr-platform-util upload-quest-build --app-id 7959676140827574 --token $OCULUS_TOKEN --apk apk/WiVRn-oculus.apk --channel $CHANNEL --age-group TEENS_AND_ADULTS $IS_DRAFT --debug_symbols_dir debug/ --debug-symbols-pattern '*.so'
 
-  build-ubuntu:
-    name: Build Ubuntu package
-    if: ${{ vars.APK_ONLY == '' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        distro: ['plucky']
-    runs-on: ubuntu-24.04
-    container: ubuntu:${{ matrix.distro }}
-    steps:
-
-    - name: Install dependencies
-      run: |
-        apt update
-        apt install --yes libcjson-dev libx264-dev libavcodec-dev libavutil-dev libswscale-dev libavfilter-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev glslang-tools libudev-dev libwayland-dev libx11-xcb-dev libxrandr-dev libxcb-randr0-dev libgl-dev libglx-dev mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev libsystemd-dev libva-dev nlohmann-json3-dev xz-utils libpipewire-0.3-dev libcli11-dev qt6-base-dev qt6-tools-dev pkexec libboost-all-dev librsvg2-bin dpkg-dev pkg-config debhelper-compat build-essential lintian cmake libnotify-dev qt6-declarative-dev extra-cmake-modules libkirigami-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev jq sudo cmake gcc g++ git wget libssl-dev qcoro-qt6-dev librsvg2-dev libarchive-dev npm qml6-module-org-kde-kirigamiaddons-formcard
-
-        wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.3.2/KTX-Software-4.3.2-Linux-x86_64.deb
-        sudo dpkg --install KTX-Software-4.3.2-Linux-x86_64.deb
-        npm install --global @gltf-transform/cli
-
-    - uses: actions/checkout@v6
-      with:
-        fetch-depth: 0
-        path: wivrn
-
-    - name: Download monado
-      run: |
-        MONADO_COMMIT=$(cat wivrn/monado-rev)
-        wget https://gitlab.freedesktop.org/monado/monado/-/archive/$MONADO_COMMIT/monado-$MONADO_COMMIT.tar.gz
-
-        mkdir wivrn/monado-src
-        tar xzf monado-*.tar.gz --strip-components=1 -C wivrn/monado-src
-
-    - name: Patch monado
-      working-directory: wivrn/monado-src
-      run: >
-        for p in ../patches/monado/*; do
-          patch -p1 --fuzz=0 --forward < "$p"
-        done
-
-    - name: Download stb
-      run: |
-        wget https://github.com/nothings/stb/archive/013ac3beddff3dbffafd5177e7972067cd2b5083.tar.gz -O stb.tar.gz
-
-        mkdir wivrn/stb-src
-        tar xzf stb.tar.gz --strip-components=1 -C wivrn/stb-src
-
-    - name: Edit changelog
-      working-directory: wivrn
-      run: >
-        tools/gen_debian_changelog.py
-        --out debian/changelog
-        ${{ (startsWith(github.ref, 'refs/tags/') && '' ) || '--nightly' }}
-        --author "github-actions <41898282+github-actions@users.noreply.github.com>"
-        --distribution "${{ matrix.distro }}";
-        cat debian/changelog
-
-    - name: Build package
-      working-directory: wivrn
-      run: dpkg-buildpackage --build=binary --no-sign
-
-    - name: Publish package
-      uses: actions/upload-artifact@v7
-      with:
-        name: wivrn-${{ matrix.distro }}
-        path: |
-          *.deb
-          *.ddeb
-
-    - name: Check package
-      working-directory: wivrn
-      run: lintian --fail-on error | sed -e s/^W:/::warning::/ -e s/^E:/::error::/
-
   release:
     name: Create release
     runs-on: ubuntu-22.04
-    needs: [build-linux, build-android, build-server-flatpak, build-ubuntu]
+    needs: [build-windows, build-android]
     if: success() && startsWith(github.ref, 'refs/tags/')
 
     steps:
     - uses: actions/checkout@v6
-      with:
-        fetch-depth: 0
-        path: wivrn
-
-    - name: Check for FLATHUB_TOKEN
-      id: flathub-token-check
-      shell: bash
-      run: |
-        if [[ "${{ secrets.FLATHUB_TOKEN}}" != '' ]]; then
-          echo "available=true" >> $GITHUB_OUTPUT;
-        else
-          echo "available=false" >> $GITHUB_OUTPUT;
-        fi
-
-    - uses: actions/checkout@v6
-      if: ${{ steps.flathub-token-check.outputs.available == 'true' }}
-      with:
-        fetch-depth: 0
-        repository: ${{ github.repository_owner }}/io.github.wivrn.wivrn
-        path: flathub
-        token: ${{ secrets.FLATHUB_TOKEN }}
 
     - name: Download artifacts (APK)
       uses: actions/download-artifact@v8
@@ -442,11 +245,11 @@ jobs:
         name: apk-Release
         path: apk
 
-    - name: Download artifacts (flatpak)
+    - name: Download artifacts (installer)
       uses: actions/download-artifact@v8
       with:
-        name: wivrn-server-x86_64.flatpak
-        path: flatpak
+        name: wivrn-installer-windows
+        path: installer
 
     - name: Release
       uses: softprops/action-gh-release@v3
@@ -456,38 +259,12 @@ jobs:
         draft: true
         files: |
           apk/*.apk
-          flatpak/*.flatpak
-
-    - name: Update flatpak manifest for flathub
-      if: ${{ steps.flathub-token-check.outputs.available == 'true' }}
-      run: |
-        WIVRN_TAG=$(echo $GITHUB_REF | sed -E -e "s,refs/[^/]*/v?,,")
-
-        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git config --global user.name "github-actions[bot]"
-
-        sudo apt-get install python3-toml python3-aiohttp
-
-        cd flathub
-        git remote add upstream https://github.com/flathub/io.github.wivrn.wivrn.git
-        git fetch upstream
-        git reset --hard upstream/master
-
-        git config --global --add safe.directory $(pwd)
-        ../wivrn/tools/gen_flatpak_manifest.py --git https://github.com/${{github.repository}}.git
-        cp ../wivrn/flatpak/*.config .
-
-        git checkout -b $WIVRN_TAG
-        git add io.github.wivrn.wivrn.yml xrizer-gen-src.json *.config
-        git commit -m "Version "$WIVRN_TAG
-        git push --set-upstream origin $WIVRN_TAG
-
-        git show
+          installer/*.exe
 
   sync_fork_downstream:
     name: Sync fork downstream
     runs-on: ubuntu-24.04
-    needs: [build-linux, build-android]
+    needs: [build-android]
     if: ${{ vars.APK_ONLY == '' && github.ref == 'refs/heads/master' }}
     steps:
       - name: Check for DOWNSTREAM_GITHUB_TOKEN

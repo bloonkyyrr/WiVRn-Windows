@@ -37,7 +37,7 @@ body:
     attributes:
       label: Installation method
       description: Describe how WiVRn and OpenComposite/xrizer were installed
-      placeholder: flatpak --user, flatpak, AUR, Gentoo/Guru, built from sources...
+      placeholder: Windows installer, built from source...
 
   - type: textarea
     attributes:

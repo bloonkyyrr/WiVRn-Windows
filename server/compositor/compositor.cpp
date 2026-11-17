@@ -39,6 +39,8 @@
 
 #include "xrt/xrt_config_build.h" // IWYU pragma: keep
 #ifdef XRT_FEATURE_RENDERDOC
+#include <windows.h>
+
 #include "renderdoc_app.h"
 
 static auto renderdoc()
@@ -48,10 +50,10 @@ static auto renderdoc()
 		const char * env = std::getenv("ENABLE_VULKAN_RENDERDOC_CAPTURE");
 		if (not env or env != std::string_view("1"))
 			return rdoc_api;
-		void * mod = dlopen("librenderdoc.so", RTLD_NOW | RTLD_NOLOAD);
+		HMODULE mod = GetModuleHandleA("renderdoc.dll");
 		if (mod)
 		{
-			pRENDERDOC_GetAPI RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)dlsym(mod, "RENDERDOC_GetAPI");
+			pRENDERDOC_GetAPI RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress(mod, "RENDERDOC_GetAPI");
 			XRT_MAYBE_UNUSED int ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_5_0, (void **)&rdoc_api);
 			assert(ret == 1);
 		}

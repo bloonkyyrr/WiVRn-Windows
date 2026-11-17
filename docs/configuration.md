@@ -1,184 +1,92 @@
-# Configurable items
+# Configuration
 
-Configuration is done on server side.
-Files are read from
-- `/usr/share/wivrn/config.json` (where `/usr` is selected at configure time with `CMAKE_INSTALL_PREFIX`)
-- `/etc/wivrn/config.json`
-- `$XDG_CONFIG_HOME/wivrn/config.json` or if `$XDG_CONFIG_HOME` is not set, `$HOME/.config/wivrn/config.json`.
+The server reads `%APPDATA%\wivrn\config.json`. A file next to the executable
+(`<install dir>\share\wivrn\config.json`) is read first and overridden by the per-user file.
+Use `-f <file>` to read a specific file instead.
 
-Files later in the list replace top-level values from previous ones.
+The dashboard that used to edit this file on Linux no longer exists; edit the JSON directly
+and restart the server. Settings that belong to the headset (resolution, codec, refresh rate,
+hand tracking) are still controlled from the headset app.
 
-If you installed WiVRn from a flatpack, the config is in `$HOME/.var/app/io.github.wivrn.wivrn/config/wivrn/config.json`.
+## Keys
 
-All elements are optional and have default values.
+### `application`
 
-## `bit-depth`
-Default value: `8` (bits)
+Application(s) to start when a headset connects. Either a string or a list of strings. Each
+entry is a command line; arguments are split on spaces, with `"..."` quoting supported.
 
-Bit depth of the video. 8-bit is supported by all encoders. 10-bit is supported by `vaapi` and `nvenc` encoders using `h265` or `av1`.
-
-## `encoder`
-The encoder to use, either a single string or object applied to all streams, or a list of string or objects with values for left, right and alpha.
-When a string it is used, it is equivalent to the `encoder` item of the object.
-
-WiVRn encodes each eye separately, and the alpha channel as one for both eyes. Each stream is processed independently, this may use resources more effectively and reduce latency.
+```json
+{
+  "application": "\"C:\\Program Files\\Steam\\steam.exe\" steam://rungameid/1234"
+}
+```
 
 ### `encoder`
-Default value: `vulkan` if supported, `nvenc` if Nvidia GPU and compiled with nvenc, `vaapi` for all other GPU when compiled with ffmpeg, else `x264`.
 
-Identifier of the encoder, one of
-* `x264`: software encoding
-* `nvenc`: Nvidia hardware encoding
-* `vaapi`: AMD/Intel hardware encoding
-* `vulkan`: for any GPU that supports vulkan video encode
+Encoder selection. A string, a list, or an object per stream:
 
-### `codec`
-Default value: best supported by both headset and encoder of `av1`, `h264`, `h265`.
-
-One of `h264`, `h265`, `av1`, `raw`.
-
-Not all encoders support every codec:
-- `x264` encoder only supports `h264` codec
-- `vulkan` encoder supports `h264` and `h265` codecs
-- `raw` encoder only supports `raw` codec
-- `nvenc` and `vaapi` support all codecs, except `raw`
-
-If `nvenc` encoder is in use, you can refer to [nvidia website](https://developer.nvidia.com/video-encode-decode-support-matrix) to make sure that your GPU supports encoding with the desired codec.
-
-### Examples
-1. Simple configuration
 ```json
 {
-	"encoder": {
-		"encoder": "vaapi",
-		"codec": "h265"
-	}
-}
-```
-Use vaapi hardware encoding, h265 video codec (HEVC).
-
-2. Hardware + software encoder
-```json
-{
-	"encoder": [
-		{
-			"encoder": "vaapi",
-			"codec": "h265",
-		},
-		{
-			"encoder": "x264",
-			"codec": "h264",
-		},
-		{
-			"encoder": "vaapi",
-			"codec": "h265",
-		},
-	]
-}
-```
-Creates a hardware encoder for left eye and transparency, and a software encoder for right eye.
-
-### `device`, only for vaapi
-Default value: unset
-
-Manually specify the device for encoding, can be used to offload encode to an iGPU. Device shall be in the form "/dev/dri/renderD128".
-
-
-### `options` (very advanced), only for vaapi
-Default value: unset
-
-Json object of additional options to pass directly to ffmpeg `avcodec_open2`'s `option` parameter.
-
-## `application`
-Default value: unset
-
-An application to start when connection with the headset is established, can be a string or an array of strings if parameters need to be provided.
-
-### Example
-```json
-{
-	"application": ["steam", "steam://launch/275850/VR"]
-}
-```
-Launch No Man's Sky in VR mode on Steam when connection with headset is established.
-
-## `tcp-only`
-Default value: `false`
-
-Only use TCP for communications with the client, this may have increased latency.
-If `false` or unset, WiVRn will use both TCP and UDP.
-
-### Example
-```json
-{
-	"tcp-only": true
+  "encoder": [
+    { "encoder": "nvenc", "codec": "h265" },
+    { "encoder": "x264", "codec": "h264" }
+  ]
 }
 ```
 
-## `publish-service`
-Default value: `avahi`
+Available encoders on Windows: `nvenc`, `vulkan`, `x264`.
 
-How to publish the service over the network, `avahi` or null.
+`device` selects the Vulkan device for the Vulkan encoder (an index into the Vulkan device
+list, not a `/dev/dri` path).
 
-If set to null, service will not be published and address has to be entered manually on the headset.
+### `bit-depth`
 
-## `openvr-compat-path`
-Default value: unset
+Bits per colour component, 8 or 10.
 
-Provides the path to the directory of an OpenVR compatibility tool (such as OpenComposite).
+### `tcp-only`
 
-If unset, WiVRn will autodetect the path of such a tool as usual (see [the SteamVR guide](./steamvr.md)).
+Only listen for TCP connections (useful over USB/`adb reverse`).
 
-If set to an null, WiVRn will not manage the OpenVR configuration.
+### `port`
 
-## `hid-forwarding`
-Default value: `false`
+Port for both TCP and UDP. Default 9757.
 
-Only available when the `uinput` kernel module is loaded and the user has write access.
+### `hostname`
 
-Mirrors input devices forwarded from the headset (keyboard, mouse, gamepad) to `uinput`
-devices, for applications that do not read them through OpenXR. Which devices are forwarded is
-chosen on the headset.
+Name published through DNS-SD. Defaults to the computer name.
 
-A forwarded gamepad is also exposed as a native OpenXR gamepad at `/user/gamepad`, which needs
-no permission and is always available. Only the digested controller state is forwarded
-(buttons, two sticks, analog triggers and a d-pad), so device specific features such as gyro,
-adaptive triggers or the touchpad are not available.
+### `publish-service`
 
-## `debug-gui`
-Default value: `false`
+`true`/`false`, or `"mdns"`/`"none"`. Disable to stop advertising the server on the network.
 
-Only available when built with `WIVRN_FEATURE_DEBUG_GUI`.
+### `openvr-compat-path`
 
-Enables the Monado debug gui.
+Directory of the OpenVR compatibility layer, the one containing `bin\win64\vrclient_x64.dll`
+(for example `C:\Program Files\OpenComposite`). Set to `null` to leave
+`openvrpaths.vrpath` untouched.
 
-## `use-steamvr-lh`
-Default value: `false`
+When unset, the server probes `OVR_COMPAT_SEARCH_PATH` (a `;`-separated list baked in at
+configure time, default `C:/Program Files/OpenComposite;C:/Program Files/xrizer`).
 
-Only available when built with `WIVRN_FEATURE_STEAMVR_LIGHTHOUSE`.
+### `hid-forwarding`
 
-Enables the driver to load SteamVR Lighthouse devices.
+Forward the headset's keyboard, mouse and gamepad to the PC through `SendInput`.
+Default `true`.
 
-## `lh-max-extrapolation`
-Default value: unset
+### `debug-gui`
 
-Only available when built with `WIVRN_FEATURE_STEAMVR_LIGHTHOUSE`.
+Show the Monado debug GUI. Only available when built with
+`-DWIVRN_FEATURE_DEBUG_GUI=ON`.
 
-Maximum time in milliseconds that poses may be extrapolated ahead for SteamVR Lighthouse devices.
+### `grip-surface`, `use-steamvr-lh`, `lh-max-extrapolation`, `lh-stick-deadzone`
 
-## `lh-stick-deadzone`
-Default value: `0`
+See the headset settings; the Lighthouse options are Linux-only and ignored on Windows.
 
-Only available when built with `WIVRN_FEATURE_STEAMVR_LIGHTHOUSE`
+## Files
 
-Applies a deadzone to joysticks on SteamVR controllers (e.g. Index).
-
-## `port`
-Default value: `9757`
-
-Change the TCP/UDP port used for the connection.
-
-## `hostname`
-Default value: unset
-
-If set, overrides the name displayed in the server list.
+| File | Purpose |
+| --- | --- |
+| `%APPDATA%\wivrn\config.json` | This configuration |
+| `%APPDATA%\wivrn\known_keys.json` | Paired headsets and their names |
+| `%APPDATA%\wivrn\cookie` | Secret used for the mDNS TXT record |
+| `%TEMP%\wivrn` | IPC socket directory |

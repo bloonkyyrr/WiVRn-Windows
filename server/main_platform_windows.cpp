@@ -20,11 +20,18 @@
 
 #include <windns.h>
 
+#include <windows.h>
+
+#include <shellapi.h>
+
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <sstream>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -34,50 +41,371 @@ namespace wivrn
 namespace
 {
 
+constexpr wchar_t window_class_name[] = L"WiVRnServerStatus";
+constexpr UINT WM_APP_STATUS = WM_APP + 1;
+constexpr UINT WM_APP_SHUTDOWN = WM_APP + 2;
+
+constexpr int editor_id = 100;
+
+constexpr int command_pair = 2001;
+constexpr int command_disconnect = 2002;
+constexpr int command_config = 2003;
+constexpr int command_quit = 2004;
+
 std::wstring widen(const std::string & value)
 {
 	if (value.empty())
 		return {};
 
 	int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), nullptr, 0);
+	if (size <= 0)
+		return {};
 	std::wstring result(size, L'\0');
 	MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), result.data(), size);
 	return result;
 }
 
+std::string format_status(const server_status & status, const std::string & error)
+{
+	std::ostringstream out;
+
+	out << "Headset: ";
+	if (status.headset_connected)
+		out << (status.system_name.empty() ? "connected" : status.system_name);
+	else
+		out << "waiting for a connection";
+
+	out << "\nSession: " << (status.session_running ? "running" : "idle");
+
+	if (status.pairing_enabled)
+		out << "\n\nPairing PIN: " << (status.pin.empty() ? "----" : status.pin)
+		    << "\nEnter this code in the WiVRn app to pair the headset.";
+
+	if (status.preferred_refresh_rate > 0)
+		out << "\nRefresh rate: " << status.preferred_refresh_rate << " Hz";
+	if (status.bitrate > 0)
+		out << "\nBitrate: " << (status.bitrate / 1000000) << " Mbit/s";
+
+	out << "\n\nHand tracking: " << (status.hand_tracking ? "yes" : "no")
+	    << "\nEye tracking: " << (status.eye_gaze ? "yes" : "no")
+	    << "\nFace tracking: " << (status.face_tracking ? "yes" : "no");
+
+	out << "\n\nPaired headsets:";
+	if (status.known_keys.empty())
+	{
+		out << "\n  (none)";
+	}
+	else
+	{
+		for (const auto & key: status.known_keys)
+			out << "\n  " << (key.name.empty() ? "Unknown headset" : key.name);
+	}
+
+	if (not error.empty())
+		out << "\n\nLast error: " << error;
+
+	out << "\n\nConfiguration: " << platform::config_directory().string();
+	out << "\nLogs are written by the console this process was started from.";
+
+	return out.str();
+}
+
 class server_ui_windows : public server_ui
 {
+	event_loop * loop;
+	ui_callbacks callbacks;
+
+	std::mutex mutex;
 	server_status status;
+	std::string last_error;
+
+	std::atomic<HWND> window{nullptr};
+	std::atomic<bool> shutting_down{false};
+	HWND editor = nullptr;
+	std::jthread thread;
+
+	static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+	{
+		if (message == WM_NCCREATE)
+		{
+			auto * create = reinterpret_cast<CREATESTRUCTW *>(lparam);
+			SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+		}
+
+		auto * self = reinterpret_cast<server_ui_windows *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+		if (not self)
+			return DefWindowProcW(hwnd, message, wparam, lparam);
+
+		return self->handle(hwnd, message, wparam, lparam);
+	}
+
+	/// Runs a user callback on the event loop thread, which owns the session state.
+	void dispatch(const std::function<void()> & callback)
+	{
+		if (callback and loop)
+			loop->invoke(callback);
+	}
+
+	void refresh()
+	{
+		std::string text;
+		{
+			std::lock_guard lock(mutex);
+			text = format_status(status, last_error);
+		}
+
+		if (editor)
+		{
+			auto wide = widen(text);
+			SetWindowTextW(editor, wide.c_str());
+		}
+	}
+
+	void create_menu(HWND hwnd)
+	{
+		HMENU menu = CreateMenu();
+
+		HMENU session = CreatePopupMenu();
+		AppendMenuW(session, MF_STRING, command_disconnect, L"&Disconnect headset");
+		AppendMenuW(session, MF_SEPARATOR, 0, nullptr);
+		AppendMenuW(session, MF_STRING, command_quit, L"&Quit");
+		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(session), L"&Session");
+
+		HMENU pairing = CreatePopupMenu();
+		AppendMenuW(pairing, MF_STRING, command_pair, L"&Pair a new headset");
+		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(pairing), L"&Pairing");
+
+		HMENU tools = CreatePopupMenu();
+		AppendMenuW(tools, MF_STRING, command_config, L"Open &configuration folder");
+		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(tools), L"&Tools");
+
+		SetMenu(hwnd, menu);
+	}
+
+	LRESULT handle(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+	{
+		switch (message)
+		{
+			case WM_CREATE:
+				editor = CreateWindowExW(0,
+				                         L"EDIT",
+				                         L"",
+				                         WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
+				                         0,
+				                         0,
+				                         0,
+				                         0,
+				                         hwnd,
+				                         reinterpret_cast<HMENU>(editor_id),
+				                         GetModuleHandleW(nullptr),
+				                         nullptr);
+				if (editor)
+					SendMessageW(editor, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+				refresh();
+				return 0;
+
+			case WM_SIZE: {
+				RECT area;
+				GetClientRect(hwnd, &area);
+				if (editor)
+					MoveWindow(editor, 8, 8, std::max(0L, area.right - 16), std::max(0L, area.bottom - 16), TRUE);
+				return 0;
+			}
+
+			case WM_APP_STATUS:
+				refresh();
+				return 0;
+
+			case WM_APP_SHUTDOWN:
+				shutting_down = true;
+				DestroyWindow(hwnd);
+				return 0;
+
+			case WM_CLOSE:
+				if (not shutting_down.exchange(true))
+					dispatch(callbacks.quit);
+				DestroyWindow(hwnd);
+				return 0;
+
+			case WM_DESTROY:
+				editor = nullptr;
+				window = nullptr;
+				PostQuitMessage(0);
+				return 0;
+
+			case WM_COMMAND:
+				switch (LOWORD(wparam))
+				{
+					case command_disconnect:
+						dispatch(callbacks.disconnect);
+						return 0;
+
+					case command_quit:
+						if (not shutting_down.exchange(true))
+							dispatch(callbacks.quit);
+						DestroyWindow(hwnd);
+						return 0;
+
+					case command_config: {
+						auto path = platform::config_directory();
+						std::error_code ec;
+						std::filesystem::create_directories(path, ec);
+						ShellExecuteW(nullptr, L"open", path.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+						return 0;
+					}
+
+					case command_pair: {
+						// Pairing needs the event loop thread; the PIN shows up in
+						// the status text once the state machine generates it.
+						auto enable = callbacks.enable_pairing;
+						if (enable and loop)
+						{
+							loop->invoke([enable] {
+								if (enable(0).empty())
+									std::cerr << "Pairing is not available while a session is running" << std::endl;
+							});
+						}
+						return 0;
+					}
+
+					default:
+						return 0;
+				}
+		}
+
+		return DefWindowProcW(hwnd, message, wparam, lparam);
+	}
+
+	void run()
+	{
+		WNDCLASSEXW window_class{};
+		window_class.cbSize = sizeof(window_class);
+		window_class.lpfnWndProc = &server_ui_windows::window_proc;
+		window_class.hInstance = GetModuleHandleW(nullptr);
+		window_class.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+		window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+		window_class.lpszClassName = window_class_name;
+		RegisterClassExW(&window_class);
+
+		HWND hwnd = CreateWindowExW(0,
+		                            window_class_name,
+		                            L"WiVRn",
+		                            WS_OVERLAPPEDWINDOW,
+		                            CW_USEDEFAULT,
+		                            CW_USEDEFAULT,
+		                            720,
+		                            520,
+		                            nullptr,
+		                            nullptr,
+		                            window_class.hInstance,
+		                            this);
+		if (not hwnd)
+		{
+			std::cerr << "Cannot create the WiVRn window, running without a desktop UI" << std::endl;
+			return;
+		}
+
+		window = hwnd;
+		create_menu(hwnd);
+		ShowWindow(hwnd, SW_SHOWNORMAL);
+		UpdateWindow(hwnd);
+
+		MSG message;
+		while (GetMessageW(&message, nullptr, 0, 0) > 0)
+		{
+			TranslateMessage(&message);
+			DispatchMessageW(&message);
+		}
+	}
 
 public:
+	explicit server_ui_windows(event_loop * loop_) :
+	        loop(loop_) {}
+
+	~server_ui_windows() override
+	{
+		if (not thread.joinable())
+			return;
+
+		shutting_down = true;
+		if (HWND hwnd = window.load())
+			PostMessageW(hwnd, WM_APP_SHUTDOWN, 0, 0);
+
+		thread.request_stop();
+		thread.join();
+	}
+
 	void start(const server_status & initial,
 	           const std::string &,
-	           ui_callbacks,
+	           ui_callbacks cb,
 	           std::function<void()> on_ready) override
 	{
-		status = initial;
-		OutputDebugStringA("WiVRn: Windows server UI initialized\n");
+		{
+			std::lock_guard lock(mutex);
+			status = initial;
+		}
+
+		callbacks = std::move(cb);
+
+		// The caller wires the rest of the server up from this hook and expects
+		// it to run before the window appears.
 		if (on_ready)
 			on_ready();
+
+		thread = std::jthread([this](std::stop_token) { run(); });
 	}
 
 	void apply(const server_status & new_status) override
 	{
-		status = new_status;
+		{
+			std::lock_guard lock(mutex);
+			status = new_status;
+		}
+
+		if (HWND hwnd = window.load())
+			PostMessageW(hwnd, WM_APP_STATUS, 0, 0);
 	}
 
 	void emit_error(const std::string & where, const std::string & message) override
 	{
+		{
+			std::lock_guard lock(mutex);
+			last_error = where + ": " + message;
+		}
+
 		std::cerr << "Server error in " << where << ": " << message << std::endl;
-		OutputDebugStringA(("WiVRn server error: " + where + ": " + message + "\n").c_str());
+
+		if (HWND hwnd = window.load())
+			PostMessageW(hwnd, WM_APP_STATUS, 0, 0);
 	}
 
 	void show_pin(const std::string & pin) override
 	{
-		OutputDebugStringA(("WiVRn pairing PIN: " + pin + "\n").c_str());
+		{
+			std::lock_guard lock(mutex);
+			status.pin = pin;
+			status.pairing_enabled = true;
+		}
+
+		if (HWND hwnd = window.load())
+		{
+			ShowWindow(hwnd, SW_SHOWNORMAL);
+			SetForegroundWindow(hwnd);
+			PostMessageW(hwnd, WM_APP_STATUS, 0, 0);
+		}
 	}
 
-	void clear_pin() override {}
+	void clear_pin() override
+	{
+		{
+			std::lock_guard lock(mutex);
+			status.pin.clear();
+			status.pairing_enabled = false;
+		}
+
+		if (HWND hwnd = window.load())
+			PostMessageW(hwnd, WM_APP_STATUS, 0, 0);
+	}
 
 	std::unique_ptr<children_manager> make_children_manager(std::function<void()> state_changed) override
 	{
@@ -93,9 +421,9 @@ class publisher_windows : public service_publisher
 
 public:
 	publisher_windows(const std::string & name,
-	                 const std::string & type,
-	                 int port,
-	                 const std::map<std::string, std::string> & txt)
+	                  const std::string & type,
+	                  int port,
+	                  const std::map<std::string, std::string> & txt)
 	{
 		platform::initialize_networking();
 
@@ -128,15 +456,15 @@ public:
 		auto wide_host = widen(host);
 
 		instance = DnsServiceConstructInstance(wide_instance.c_str(),
-		                                      wide_host.c_str(),
-		                                      nullptr,
-		                                      nullptr,
-		                                      htons((unsigned short)port),
-		                                      0,
-		                                      0,
-		                                      (DWORD)key_ptrs.size(),
-		                                      key_ptrs.empty() ? nullptr : key_ptrs.data(),
-		                                      value_ptrs.empty() ? nullptr : value_ptrs.data());
+		                                       wide_host.c_str(),
+		                                       nullptr,
+		                                       nullptr,
+		                                       htons((unsigned short)port),
+		                                       0,
+		                                       0,
+		                                       (DWORD)key_ptrs.size(),
+		                                       key_ptrs.empty() ? nullptr : key_ptrs.data(),
+		                                       value_ptrs.empty() ? nullptr : value_ptrs.data());
 
 		if (not instance)
 		{
@@ -342,9 +670,9 @@ public:
 
 } // namespace
 
-std::unique_ptr<server_ui> make_server_ui()
+std::unique_ptr<server_ui> make_server_ui(event_loop * loop)
 {
-	return std::make_unique<server_ui_windows>();
+	return std::make_unique<server_ui_windows>(loop);
 }
 
 std::unique_ptr<event_loop> make_event_loop()

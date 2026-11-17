@@ -137,35 +137,9 @@ void on_server_exit(int status_code)
 
 std::string steam_command()
 {
-	std::string command;
-
-	const char * pv = std::getenv("PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES");
-	if (not(pv and std::string_view(pv) == "1"))
-		command = "PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1 ";
-
-	std::string home{std::getenv("HOME") ? std::getenv("HOME") : ""};
-
-	if (auto p = active_runtime::openvr_compat_path().string(); not p.empty())
-	{
-		if (p.starts_with("/usr"))
-			command += "VR_OVERRIDE=/run/host" + p + ' ';
-		else if (p.starts_with("/var") and not p.starts_with(home))
-		{
-			for (auto copy = std::filesystem::path(p); copy != copy.parent_path(); copy = copy.parent_path())
-			{
-				if (copy.filename() == "io.github.wivrn.wivrn")
-				{
-					command += "PRESSURE_VESSEL_FILESYSTEMS_RW=" + copy.string() + ' ';
-					break;
-				}
-			}
-		}
-	}
-
-	if (not command.empty())
-		command += "%command%";
-
-	return command;
+	// On Windows the OpenVR runtime is selected through openvrpaths.vrpath, so
+	// no Steam launch options are needed for the compatibility layer.
+	return {};
 }
 
 void start_server(configuration config)
@@ -676,7 +650,7 @@ int inner_main(int argc, char * argv[], bool show_instructions)
 		start_publishing();
 	start_listening();
 
-	ui = make_server_ui();
+	ui = make_server_ui(loop.get());
 	ui->start(status, json_configuration, make_callbacks(), on_name_acquired);
 	ui->apply(status);
 
@@ -705,7 +679,7 @@ int main(int argc, char * argv[])
 	auto early_active_runtime = app.add_flag("--early-active-runtime")->description("forcibly manages the active runtime even if no headset present");
 	auto no_instructions = app.add_flag("--no-instructions")->group("");
 	auto no_fork = app.add_flag("--no-fork")->description("disable fork to serve connection")->group("Debug");
-	auto no_publish = app.add_flag("--no-publish-service")->description("disable publishing the service through avahi");
+	auto no_publish = app.add_flag("--no-publish-service")->description("disable publishing the service through DNS-SD");
 	auto no_encrypt = app.add_flag("--no-encrypt")->description("disable encryption")->group("Debug");
 #if WIVRN_FEATURE_DEBUG_GUI
 	auto debug_gui = app.add_flag("--debug-gui")->description("show the debug GUI")->group("Debug");

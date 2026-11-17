@@ -1,9 +1,7 @@
 set(U_GIT_TAG_CPP "${CMAKE_BINARY_DIR}/u_git_tag.cpp")
 
-if(WIVRN_BUILD_SERVER AND NOT WIN32)
-    if(NOT WIVRN_USE_GLIB OR NOT WIVRN_USE_AVAHI OR NOT WIVRN_USE_LIBNOTIFY)
-        message(FATAL_ERROR "wivrn-server requires GLib, Avahi and libnotify on POSIX")
-    endif()
+if(NOT WIN32)
+    message(FATAL_ERROR "wivrn-server only builds on Windows")
 endif()
 
 set(XRT_BUILD_DRIVER_ARDUINO            OFF)
@@ -78,12 +76,7 @@ set(BUILD_TESTING                    OFF)
 
 set(XRT_HAVE_SYSTEM_CJSON            OFF)
 
-# Drive Monado's tracing from the same switch as WiVRn's: WIVRN_TRACE_MONADO builds Monado
-# with percetto so its u_trace markers join the WIVRN_TRACING session (system backend).
-# Monado does not fetch percetto; it must be discoverable (pkg-config / installed, or
-# -DPercetto_ROOT_DIR=...). If it is missing, Monado's option_with_deps fails the configure
-# with "XRT_HAVE_PERCETTO specified but not available". Linking percetto against WiVRn's own
-# Perfetto SDK copy (to drop this requirement and the second runtime) is a planned follow-up.
+# Drive Monado's tracing from the same switch as WiVRn's.
 if(WIVRN_TRACE_MONADO)
 	message(STATUS "WIVRN_TRACE_MONADO=ON: building Monado with percetto tracing (percetto must be available)")
 	set(XRT_FEATURE_TRACING ON)
@@ -103,6 +96,7 @@ if (WIVRN_BUILD_SERVER)
 			hostname.cpp
 			main.cpp
 			main_platform.h
+			main_platform_windows.cpp
 			sleep_inhibitor.cpp
 			start_application.cpp
 			ipc_server_cb.cpp
@@ -110,6 +104,7 @@ if (WIVRN_BUILD_SERVER)
 			wivrn_ipc.cpp
 
 			audio/audio_setup.cpp
+			audio/audio_wasapi.cpp
 
 			compositor/compositor.cpp
 			compositor/layer_squasher.cpp
@@ -148,20 +143,9 @@ if (WIVRN_BUILD_SERVER)
 		)
 	target_compile_features(wivrn-server PRIVATE cxx_std_20)
 	target_compile_definitions(wivrn-server PRIVATE VULKAN_HPP_NO_CONSTRUCTORS)
+	target_compile_definitions(wivrn-server PRIVATE UNICODE _UNICODE)
 
-	if(WIN32)
-		target_sources(wivrn-server PRIVATE main_platform_windows.cpp)
-		target_link_libraries(wivrn-server PRIVATE dnsapi)
-	else()
-		target_sources(wivrn-server PRIVATE main_platform_posix.cpp)
-	endif()
-
-	if(WIVRN_USE_AVAHI)
-		target_sources(wivrn-server PRIVATE avahi_publisher.cpp)
-	endif()
-	if(WIVRN_USE_GLIB)
-		target_sources(wivrn-server PRIVATE start_systemd_unit.cpp)
-	endif()
+	target_link_libraries(wivrn-server PRIVATE dnsapi ole32 uuid)
 
 	target_include_directories(wivrn-server SYSTEM PRIVATE ${monado_SOURCE_DIR}/src/xrt/compositor/)
 	target_include_directories(wivrn-server PRIVATE .)
@@ -186,16 +170,6 @@ if (WIVRN_BUILD_SERVER)
 			)
 	endif()
 
-	if(WIVRN_USE_VAAPI)
-		target_sources(
-			wivrn-server
-			PRIVATE encoder/ffmpeg/video_encoder_ffmpeg.cpp
-				encoder/ffmpeg/video_encoder_va.cpp
-				encoder/ffmpeg/ffmpeg_helper.cpp
-			)
-		target_link_libraries(wivrn-server PRIVATE PkgConfig::LIBAV PkgConfig::LIBDRM)
-	endif()
-
 	if(WIVRN_USE_VULKAN_ENCODE)
 		target_sources(wivrn-server PRIVATE
 			encoder/video_encoder_vulkan.cpp
@@ -206,74 +180,27 @@ if (WIVRN_BUILD_SERVER)
 
 	if(WIVRN_USE_X264)
 		target_sources(wivrn-server PRIVATE encoder/video_encoder_x264.cpp)
-		if(WIN32)
-			target_link_libraries(wivrn-server PRIVATE x264)
-		else()
-			target_link_libraries(wivrn-server PRIVATE PkgConfig::X264)
-		endif()
+		target_link_libraries(wivrn-server PRIVATE x264::x264)
 	endif()
 
 	if(WIVRN_USE_PERFETTO)
-		find_path(PERFETTO_SDK_DIR
-			NAMES perfetto.h
-			PATHS /usr/share/perfetto/sdk
-			DOC "Perfetto amalgamated SDK directory")
+		set(PERFETTO_SDK_DIR "" CACHE PATH "Directory containing the Perfetto amalgamated SDK (perfetto.h)")
 		if(NOT PERFETTO_SDK_DIR)
-			message(FATAL_ERROR "WIVRN_USE_PERFETTO=ON but Perfetto SDK (perfetto.h) not found. Install perfetto-sdk.")
+			message(FATAL_ERROR "WIVRN_USE_PERFETTO=ON but PERFETTO_SDK_DIR is not set. Download perfetto.h and perfetto.cc from the perfetto repository.")
 		endif()
 		add_library(wivrn-perfetto-sdk STATIC ${PERFETTO_SDK_DIR}/perfetto.cc)
 		target_include_directories(wivrn-perfetto-sdk PUBLIC ${PERFETTO_SDK_DIR})
-		target_compile_options(wivrn-perfetto-sdk PRIVATE -w)
-		target_link_libraries(wivrn-perfetto-sdk PUBLIC pthread dl)
+		if(MSVC)
+			target_compile_options(wivrn-perfetto-sdk PRIVATE /w)
+		else()
+			target_compile_options(wivrn-perfetto-sdk PRIVATE -w)
+		endif()
+		target_link_libraries(wivrn-perfetto-sdk PUBLIC ws2_32)
 		target_link_libraries(wivrn-server PRIVATE wivrn-perfetto-sdk)
 		target_compile_definitions(wivrn-server PRIVATE WIVRN_USE_PERFETTO)
 		if(WIVRN_TRACE_MONADO)
 			target_compile_definitions(wivrn-server PRIVATE WIVRN_TRACE_MONADO)
 		endif()
-	endif()
-
-		if(WIVRN_USE_PIPEWIRE AND NOT WIN32)
-		target_sources(
-			wivrn-server
-			PRIVATE audio/audio_pipewire.cpp
-		)
-		target_link_libraries(wivrn-server PRIVATE PkgConfig::libpipewire)
-	endif()
-
-	if(WIN32)
-		target_sources(wivrn-server PRIVATE audio/audio_wasapi.cpp)
-		target_link_libraries(wivrn-server PRIVATE ole32 uuid)
-	endif()
-
-	# Generate dbus interface code as a separate target to avoid warnings in generated code
-	if(WIVRN_USE_GLIB)
-	add_custom_command(OUTPUT wivrn_server_dbus.c wivrn_server_dbus.h
-			   COMMAND ${GDBUS_CODEGEN} ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/io.github.wivrn.Server.xml --interface-prefix io.github.wivrn --generate-c-code wivrn_server_dbus --c-namespace Wivrn
-			   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/io.github.wivrn.Server.xml)
-	add_custom_target(wivrn-server-dbus-codegen ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/wivrn_server_dbus.c ${CMAKE_CURRENT_BINARY_DIR}/wivrn_server_dbus.h)
-	add_library(wivrn-server-dbus STATIC
-		${CMAKE_CURRENT_BINARY_DIR}/wivrn_server_dbus.c
-		${CMAKE_CURRENT_BINARY_DIR}/wivrn_server_dbus.h
-		)
-	target_include_directories(wivrn-server-dbus PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
-	add_dependencies(wivrn-server-dbus wivrn-server-dbus-codegen)
-	target_link_libraries(wivrn-server-dbus PUBLIC PkgConfig::glib2)
-	if(WIVRN_USE_GLIB)
-		target_link_libraries(wivrn-server PUBLIC wivrn-server-dbus)
-	endif()
-	if(WIVRN_USE_LIBNOTIFY)
-		target_link_libraries(wivrn-server PUBLIC PkgConfig::libnotify)
-	endif()
-
-	add_custom_command(OUTPUT systemd_manager.c systemd_manager.h
-			   COMMAND ${GDBUS_CODEGEN} ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/org.freedesktop.systemd1.Manager.xml --interface-prefix org.freedesktop.systemd1 --generate-c-code systemd_manager --c-namespace systemd
-			   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/org.freedesktop.systemd1.Manager.xml )
-	add_custom_command(OUTPUT systemd_unit.c systemd_unit.h
-		COMMAND ${GDBUS_CODEGEN} ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/org.freedesktop.systemd1.Unit.xml --interface-prefix org.freedesktop.systemd1 --generate-c-code systemd_unit --c-namespace unit
-			   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/org.freedesktop.systemd1.Manager.xml )
-	target_sources(wivrn-server-dbus PRIVATE
-		${CMAKE_CURRENT_BINARY_DIR}/systemd_manager.c ${CMAKE_CURRENT_BINARY_DIR}/systemd_manager.h
-		${CMAKE_CURRENT_BINARY_DIR}/systemd_unit.c ${CMAKE_CURRENT_BINARY_DIR}/systemd_unit.h)
 	endif()
 
 	target_link_libraries(
@@ -300,9 +227,6 @@ if (WIVRN_BUILD_SERVER)
 
 	include(CompileGLSL)
 	FetchContent_GetProperties(monado SOURCE_DIR _monado_src)
-	if(WIVRN_USE_AVAHI)
-		target_link_libraries(wivrn-server PRIVATE PkgConfig::AVAHI)
-	endif()
 
 	wivrn_compile_glsl(wivrn-server
 		TARGET_ENV vulkan1.3
@@ -313,56 +237,26 @@ if (WIVRN_BUILD_SERVER)
 
 	target_compile_definitions(wivrn-server PRIVATE JSON_DIAGNOSTICS=1)
 
-	if(WIVRN_USE_SYSTEMD)
-		configure_file(dist/wivrn.service.in wivrn.service)
-		install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wivrn.service
-			DESTINATION lib/systemd/user/)
-
-		install(FILES dist/firewalld-wivrn.xml
-			RENAME wivrn.xml
-			DESTINATION lib/firewalld/services)
-	endif()
-
-	install(TARGETS wivrn-server)
+	install(TARGETS wivrn-server RUNTIME DESTINATION bin)
 endif()
 
 if (WIVRN_BUILD_SERVER_LIBRARY)
 	set_target_properties(${RUNTIME_TARGET} PROPERTIES EXCLUDE_FROM_ALL FALSE)
 	set_target_properties(monado PROPERTIES EXCLUDE_FROM_ALL FALSE)
 
-	set(_extra_args)
-	if (WIVRN_OPENXR_MANIFEST_TYPE STREQUAL "absolute")
-		set(_extra_args ABSOLUTE_RUNTIME_PATH)
-	elseif (WIVRN_OPENXR_MANIFEST_TYPE STREQUAL "relative")
-		set(_extra_args RUNTIME_DIR_RELATIVE_TO_MANIFEST ../../../${CMAKE_INSTALL_LIBDIR}/wivrn)
-	endif()
-
 	set_target_properties(monado PROPERTIES OUTPUT_NAME "monado_wivrn")
-	# Workaround as generate_openxr_runtime_manifest_at_install uses target name as library path
+	# Workaround: the manifest generator refers to the target by name.
 	add_library(monado_wivrn ALIAS monado)
 
-	if (WIVRN_OPENXR_MANIFEST_ABI)
-		if (CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "i.86")
-			set(_filename openxr_wivrn.i686.json)
-		else()
-			set(_filename openxr_wivrn.${CMAKE_C_COMPILER_ARCHITECTURE_ID}.json)
-		endif()
-	else()
-		set(_filename openxr_wivrn.json)
-	endif()
-
-	generate_openxr_runtime_manifest_at_install(
-		${_extra_args}
-		RUNTIME_TARGET ${RUNTIME_TARGET}
-		DESTINATION share/openxr/1
-		RELATIVE_RUNTIME_DIR ${CMAKE_INSTALL_LIBDIR}/wivrn
-		LIBMONADO monado_wivrn
-		OUT_FILENAME ${_filename}
-		MANIFEST_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/dist/openxr_manifest.in.json"
-		)
+	# The OpenXR loader looks the runtime up through the manifest, which must sit
+	# next to the libraries it names.
+	file(READ "${CMAKE_CURRENT_SOURCE_DIR}/dist/openxr_wivrn.json.in" _manifest_template)
+	string(REPLACE "@library@" "./$<TARGET_FILE_NAME:${RUNTIME_TARGET}>" _manifest "${_manifest_template}")
+	string(REPLACE "@monado@" "./$<TARGET_FILE_NAME:monado>" _manifest "${_manifest}")
+	file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/openxr_wivrn.json" CONTENT "${_manifest}")
 
 	install(TARGETS ${RUNTIME_TARGET} monado
-		LIBRARY
-		DESTINATION ${CMAKE_INSTALL_LIBDIR}/wivrn
+		RUNTIME DESTINATION bin
 		COMPONENT Runtime)
+	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/openxr_wivrn.json" DESTINATION bin)
 endif()

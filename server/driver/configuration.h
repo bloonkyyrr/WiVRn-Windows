@@ -38,7 +38,7 @@ namespace wivrn
 enum class service_publication
 {
 	none,
-	avahi,
+	mdns,
 };
 
 struct configuration
@@ -63,7 +63,7 @@ struct configuration
 	bool tcp_only = false;
 	int port = wivrn::default_port;
 	std::string hostname = wivrn::hostname();
-	service_publication publication = service_publication::avahi;
+	service_publication publication = service_publication::mdns;
 
 	// monostate: default value, string: user defined, nullptr: disabled
 	std::variant<std::monostate, std::string, std::nullptr_t> openvr_compat_path;

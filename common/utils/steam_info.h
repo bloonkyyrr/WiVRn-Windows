@@ -39,17 +39,15 @@ public:
 	struct icon
 	{
 		std::string clienticon;
-		std::string linuxclienticon;
 	};
 
 private:
 	std::filesystem::path root;
-	bool flatpak;
 	std::optional<uint32_t> default_userid;
 	std::optional<std::unordered_map<uint32_t, icon>> icons;
 	std::unordered_map<uint32_t, std::filesystem::path> shortcut_icons;
 
-	steam(std::filesystem::path root, bool flatpak);
+	explicit steam(std::filesystem::path root);
 
 public:
 	static std::vector<steam> find_installations();

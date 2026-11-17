@@ -1,0 +1,8 @@
+{
+    "file_format_version": "1.0.0",
+    "runtime": {
+        "name": "WiVRn",
+        "library_path": "@library@",
+        "MND_libmonado_path": "@monado@"
+    }
+}

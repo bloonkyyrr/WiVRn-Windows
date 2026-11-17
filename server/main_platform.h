@@ -79,7 +79,7 @@ struct ui_callbacks
 	std::function<void(int)> bitrate_changed;
 };
 
-/// Desktop integration: D-Bus on Linux, native Windows state on Windows.
+/// Desktop integration: a Win32 status window driven by the server state.
 class server_ui
 {
 public:
@@ -93,17 +93,21 @@ public:
 	virtual void apply(const server_status & status) = 0;
 	virtual void emit_error(const std::string & where, const std::string & message) = 0;
 
-	/// Called when the user can pair a new headset (POSIX notification, Windows no-op).
+	/// Called when the user can pair a new headset, brings the window forward.
 	virtual void show_pin(const std::string & pin) = 0;
 	virtual void clear_pin() = 0;
 
-	/// Create the child manager for this platform (systemd on Linux when available).
+	/// Create the child manager for this platform.
 	virtual std::unique_ptr<children_manager> make_children_manager(std::function<void()> state_changed) = 0;
 };
 
-std::unique_ptr<server_ui> make_server_ui();
+class event_loop;
 
-/// mDNS/DNS-SD registration: Avahi on Linux, DnsServiceRegister on Windows.
+/// Create the desktop UI. User actions are posted to \p loop so that they run
+/// on the thread that owns the session state.
+std::unique_ptr<server_ui> make_server_ui(event_loop * loop);
+
+/// mDNS/DNS-SD registration through DnsServiceRegister.
 class service_publisher
 {
 public:

@@ -18,13 +18,13 @@
 
 #pragma once
 
+/// Keeps the system awake while a session is active.
 class sleep_inhibitor
 {
-#if !defined(_WIN32)
-	int fd = -1;
-#endif
-
 public:
 	sleep_inhibitor();
 	~sleep_inhibitor();
+
+	sleep_inhibitor(const sleep_inhibitor &) = delete;
+	sleep_inhibitor & operator=(const sleep_inhibitor &) = delete;
 };

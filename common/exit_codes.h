@@ -28,6 +28,6 @@ enum
 	unknown_error = EXIT_FAILURE,
 	cannot_create_pipe,
 	cannot_create_socketpair,
-	cannot_connect_to_avahi,
+	cannot_publish_service,
 };
 }

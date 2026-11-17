@@ -18,200 +18,241 @@
  */
 
 #include "active_runtime.h"
+
 #include "driver/configuration.h"
 #include "platform.h"
-#include "utils/flatpak.h"
-#include "utils/overloaded.h"
-#include "utils/xdg_base_directory.h"
 #include "wivrn_config.h"
+
+#include <windows.h>
+
 #include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <ranges>
+#include <string_view>
+#include <type_traits>
 
-static std::vector<std::filesystem::path> filter_files(const std::filesystem::path & directory, const std::filesystem::path & prefix)
+namespace
 {
-	std::vector<std::filesystem::path> result;
-	for (const auto & file: std::filesystem::directory_iterator{directory})
+constexpr const char * openxr_registry_key = "SOFTWARE\\Khronos\\OpenXR\\1";
+constexpr const char * openxr_registry_value = "ActiveRuntime";
+
+std::filesystem::path executable_path()
+{
+	std::vector<char> buffer(MAX_PATH);
+	while (true)
 	{
-		if (file.path().filename().string().starts_with(prefix.string()))
-			result.push_back(file.path());
+		DWORD length = GetModuleFileNameA(nullptr, buffer.data(), (DWORD)buffer.size());
+		if (length == 0)
+			return {};
+		if (length < buffer.size())
+			return std::filesystem::path(std::string(buffer.data(), length));
+		buffer.resize(buffer.size() * 2);
 	}
-	return result;
 }
+
+std::filesystem::path executable_directory()
+{
+	return executable_path().parent_path();
+}
+
+std::filesystem::path program_data_directory()
+{
+	if (const char * appdata = std::getenv("APPDATA"); appdata and *appdata)
+		return appdata;
+	return wivrn::platform::config_directory().parent_path();
+}
+
+std::filesystem::path local_appdata_directory()
+{
+	if (const char * local = std::getenv("LOCALAPPDATA"); local and *local)
+		return local;
+	return wivrn::platform::cache_directory().parent_path();
+}
+
+std::filesystem::path openvr_manifest_path()
+{
+	return local_appdata_directory() / "openvr" / "openvrpaths.vrpath";
+}
+
+std::filesystem::path backup_name(std::filesystem::path file)
+{
+	file += ".wivrn-backup";
+	return file;
+}
+
+void move_file(const std::filesystem::path & from, const std::filesystem::path & to)
+{
+	std::error_code ec;
+	auto from_status = std::filesystem::symlink_status(from, ec);
+	if (ec or from_status.type() == std::filesystem::file_type::not_found)
+		return;
+	std::filesystem::remove(to, ec);
+	std::filesystem::rename(from, to, ec);
+	if (ec)
+		throw std::system_error(ec, "rename " + from.string());
+}
+
+/// Locates the OpenVR client DLL inside a compatibility layer directory.
+std::filesystem::path openvr_client_dll(const std::filesystem::path & compat_root)
+{
+	for (const auto & candidate: {compat_root / "bin" / "win64" / "vrclient_x64.dll",
+	                              compat_root / "vrclient_x64.dll",
+	                              compat_root / "bin" / "win32" / "vrclient.dll"})
+	{
+		if (std::filesystem::exists(candidate))
+			return candidate;
+	}
+	return {};
+}
+} // namespace
 
 namespace wivrn
 {
 
 std::vector<std::filesystem::path> active_runtime::manifest_path()
 {
-	const std::filesystem::path location = "share/openxr/1";
-	const std::filesystem::path prefix = "openxr_wivrn";
-	// Check if in a flatpak
-	if (auto path = flatpak_key(flatpak::section::instance, "app-path"))
-		return {*path / location / "openxr_wivrn.json"};
+	auto bin = executable_directory();
 
-	// Check if running from build directory
-#if defined(_WIN32)
-	char exe_path[MAX_PATH]{};
-	DWORD exe_length = GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
-	auto exe = exe_length ? std::filesystem::path(exe_path) : std::filesystem::path();
-#else
-	auto exe = std::filesystem::read_symlink("/proc/self/exe");
-#endif
-	auto dev_manifest = exe.parent_path().parent_path() / "openxr_wivrn-dev.json";
-	if (std::filesystem::exists(dev_manifest))
-		return {dev_manifest};
+	// Running from the build tree: CMake writes the manifest next to the server.
+	for (const auto & candidate: {bin / "openxr_wivrn-dev.json", bin / "openxr_wivrn.json"})
+	{
+		if (std::filesystem::exists(candidate))
+			return {candidate};
+	}
 
-	// Assume we are installed
-	return filter_files(WIVRN_INSTALL_PREFIX / location, prefix);
+	// Installed layout (share/wivrn/openxr or share/openxr/1 next to the install prefix).
+	for (const auto & candidate: {std::filesystem::path(WIVRN_INSTALL_PREFIX) / "share" / "openxr" / "1" / "openxr_wivrn.json",
+	                              std::filesystem::path(WIVRN_INSTALL_PREFIX) / "share" / "wivrn" / "openxr_wivrn.json"})
+	{
+		if (std::filesystem::exists(candidate))
+			return {candidate};
+	}
+
+	return {};
 }
 
 std::filesystem::path active_runtime::openvr_compat_path()
 {
 	return std::visit(
-	        utils::overloaded{
-	                [](std::monostate) {
-		                // no user configuration: return default
-		                std::optional<std::filesystem::path> flatpak_root = flatpak_key(flatpak::section::instance, "app-path");
-		                // flatpak default
-		                if (flatpak_root)
-			                return *flatpak_root / "xrizer";
+	        [](auto && value) -> std::filesystem::path {
+		        using T = std::decay_t<decltype(value)>;
 
-		                for (auto path: std::ranges::split_view(std::string_view(OVR_COMPAT_SEARCH_PATH), std::string_view(":")))
-		                {
-			                if (std::filesystem::path res = std::string_view(path); std::filesystem::exists(res))
-				                return res;
-		                }
-		                return std::filesystem::path();
-	                },
-	                [](const std::string & path) {
-		                // explicit value, use it
-		                std::optional<std::filesystem::path> flatpak_root = flatpak_key(flatpak::section::instance, "app-path");
-		                return flatpak_root.value_or("") / path;
-	                },
-	                [](std::nullptr_t) {
-		                // explicit null, don't set any compat path
-		                return std::filesystem::path();
-	                },
+		        if constexpr (std::is_same_v<T, std::monostate>)
+		        {
+			        // No user configuration: probe the configured search path.
+			        for (auto path: std::ranges::split_view(std::string_view(OVR_COMPAT_SEARCH_PATH), std::string_view(";")))
+			        {
+				        std::filesystem::path candidate{std::string(path.begin(), path.end())};
+				        if (candidate.empty())
+					        continue;
+				        if (not openvr_client_dll(candidate).empty())
+					        return candidate;
+			        }
+			        return {};
+		        }
+		        else if constexpr (std::is_same_v<T, std::string>)
+		        {
+			        return std::filesystem::path(value);
+		        }
+		        else
+		        {
+			        // Explicit null: do not set any compatibility layer.
+			        return {};
+		        }
 	        },
 	        configuration().openvr_compat_path);
-}
-
-static std::filesystem::path backup_name(std::filesystem::path file)
-{
-	file += ".wivrn-backup";
-	return file;
-}
-
-static void move_file(const std::filesystem::path & from, const std::filesystem::path & to)
-{
-	auto from_status = std::filesystem::symlink_status(from);
-	if (from_status.type() == std::filesystem::file_type::not_found)
-		return;
-	std::filesystem::rename(from, to);
-}
-
-static const std::filesystem::path & backup_and_symlink(
-        const std::filesystem::path & location,
-        const std::filesystem::path & dst)
-{
-	std::filesystem::create_directories(location.parent_path());
-	std::error_code ec;
-	if (std::filesystem::equivalent(location, dst, ec))
-		return location;
-	// The file may be a dead symlink
-	if (ec)
-		std::filesystem::remove(location);
-
-	move_file(location, backup_name(location));
-
-	std::filesystem::create_symlink(dst, location);
-	return location;
-}
-
-static std::string get_abi(const std::filesystem::path & filename)
-{
-	std::string abi = filename.stem().extension().string();
-	// https://registry.khronos.org/OpenXR/specs/1.0/loader.html#architecture-identifiers
-	if (not abi.empty() and
-	    std::ranges::contains(std::array{
-	                                  "x32",
-	                                  "x86_64",
-	                                  "i686",
-	                                  "aarch64",
-	                                  "armv7a-vfp",
-	                                  "armv5te",
-	                                  "mips64",
-	                                  "mips",
-	                                  "ppc64",
-	                                  "ppc64el",
-	                                  "s390x",
-	                                  "hppa",
-	                                  "alpha",
-	                                  "ia64",
-	                                  "m68k",
-	                                  "m68k",
-	                                  "riscv64",
-	                                  "sparc64",
-	                          },
-	                          abi.substr(1)))
-		return abi;
-	return "";
 }
 
 active_runtime::active_runtime() :
         pid(platform::current_process_id())
 {
-	for (const auto & manifest: manifest_path())
+	auto manifests = manifest_path();
+	if (manifests.empty())
 	{
-		try
+		std::cerr << "Cannot find the WiVRn OpenXR runtime manifest, leaving the active runtime unchanged" << std::endl;
+	}
+	for (const auto & manifest: manifests)
+	{
+		active_runtime_json.push_back(manifest);
+
+		// Per-process runtime selection. The variable is inherited by every
+		// application the server launches, so this works without elevation.
+		if (const char * previous = std::getenv("XR_RUNTIME_JSON"); previous and *previous)
 		{
-			active_runtime_json.push_back(backup_and_symlink(
-			        xdg_config_home() / ("openxr/1/active_runtime" + get_abi(manifest) + ".json"),
-			        manifest));
+			if (not previous_xr_runtime_json)
+				previous_xr_runtime_json = previous;
 		}
-		catch (std::exception & e)
+		platform::set_environment_variable("XR_RUNTIME_JSON", manifest.string().c_str());
+
+		// System-wide selection: HKLM is writable by administrators only.
+		HKEY key = nullptr;
+		if (RegCreateKeyExA(HKEY_LOCAL_MACHINE,
+		                    openxr_registry_key,
+		                    0,
+		                    nullptr,
+		                    0,
+		                    KEY_SET_VALUE,
+		                    nullptr,
+		                    &key,
+		                    nullptr) == ERROR_SUCCESS)
 		{
-			std::cerr << "Cannot set active OpenXR runtime: " << e.what() << std::endl;
+			const std::string value = manifest.string();
+			if (RegSetValueExA(key,
+			                   openxr_registry_value,
+			                   0,
+			                   REG_SZ,
+			                   reinterpret_cast<const BYTE *>(value.c_str()),
+			                   (DWORD)value.size() + 1) == ERROR_SUCCESS)
+			{
+				registry_updated = true;
+			}
+			else
+			{
+				std::cerr << "Cannot write the OpenXR active runtime registry value (administrator rights required); "
+				          << "applications launched by WiVRn still use XR_RUNTIME_JSON" << std::endl;
+			}
+			RegCloseKey(key);
 		}
+		break;
 	}
 
 	try
 	{
 		auto ovr_compat = openvr_compat_path();
 		if (ovr_compat.empty())
-			std::cerr << "Not setting an OpenVR compatibility library" << std::endl;
-		else
 		{
-			std::cerr << "Setting the OpenVR compatibility library to " << ovr_compat.string() << std::endl;
-			if (not wivrn::is_flatpak())
-			{
-				auto vrclient = ovr_compat / "bin"
-#ifdef __x86_64__
-				                / "linux64"
-#endif
-				                / "vrclient.so";
-				if (not std::filesystem::exists(vrclient))
-					std::cerr << "Unable to read " << vrclient << " ensure your OpenVR compatibility library is set correctly" << std::endl;
-			}
-			std::filesystem::path openvr_manifest = xdg_config_home() / "openvr/openvrpaths.vrpath";
-			std::filesystem::create_directories(openvr_manifest.parent_path());
-			move_file(openvr_manifest, backup_name(openvr_manifest));
-
-			nlohmann::json manifest;
-			manifest["runtime"] = {ovr_compat.string()};
-			manifest["version"] = 1;
-			std::ofstream manifest_file(openvr_manifest.c_str());
-			manifest_file.exceptions(std::ofstream::failbit);
-			manifest_file << manifest;
-			this->openvr_manifest = openvr_manifest;
+			std::cerr << "Not setting an OpenVR compatibility library" << std::endl;
+			return;
 		}
+
+		std::cerr << "Setting the OpenVR compatibility library to " << ovr_compat.string() << std::endl;
+		if (openvr_client_dll(ovr_compat).empty())
+		{
+			std::cerr << "Unable to find vrclient_x64.dll under " << ovr_compat.string()
+			          << ", ensure your OpenVR compatibility library is set correctly" << std::endl;
+		}
+
+		openvr_manifest = openvr_manifest_path();
+		std::filesystem::create_directories(openvr_manifest.parent_path());
+		move_file(openvr_manifest, backup_name(openvr_manifest));
+
+		nlohmann::json manifest;
+		manifest["runtime"] = {ovr_compat.string()};
+		manifest["version"] = 1;
+		std::ofstream manifest_file(openvr_manifest);
+		manifest_file.exceptions(std::ofstream::failbit);
+		manifest_file << manifest;
+		manifest_file.close();
 	}
 	catch (std::exception & e)
 	{
 		std::cerr << "Cannot set active OpenVR runtime: " << e.what() << std::endl;
+		openvr_manifest.clear();
 	}
 }
 
@@ -219,25 +260,31 @@ active_runtime::~active_runtime()
 {
 	if (pid != platform::current_process_id())
 		return;
-	for (const auto & manifest: active_runtime_json)
+
+	if (registry_updated)
 	{
-		try
+		HKEY key = nullptr;
+		if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, openxr_registry_key, 0, KEY_SET_VALUE, &key) == ERROR_SUCCESS)
 		{
-			std::filesystem::remove(manifest);
-			move_file(backup_name(manifest), manifest);
+			RegDeleteValueA(key, openxr_registry_value);
+			RegCloseKey(key);
 		}
-		catch (std::exception & e)
-		{
-			std::cerr << "Cannot unset active OpenXR runtime " << manifest << ": " << e.what() << std::endl;
-		}
+		registry_updated = false;
 	}
+
+	if (previous_xr_runtime_json)
+		platform::set_environment_variable("XR_RUNTIME_JSON", previous_xr_runtime_json->c_str());
+	else
+		platform::set_environment_variable("XR_RUNTIME_JSON", "");
 
 	try
 	{
 		if (not openvr_manifest.empty())
 		{
-			std::filesystem::remove(openvr_manifest);
+			std::error_code ec;
+			std::filesystem::remove(openvr_manifest, ec);
 			move_file(backup_name(openvr_manifest), openvr_manifest);
+			openvr_manifest.clear();
 		}
 	}
 	catch (std::exception & e)
@@ -248,16 +295,16 @@ active_runtime::~active_runtime()
 
 void active_runtime::cleanup_openxr()
 {
-	for (const auto & manifest: manifest_path())
+	// Restore an OpenVR manifest backup left behind by an unclean shutdown.
+	auto manifest = openvr_manifest_path();
+	if (std::filesystem::exists(backup_name(manifest)))
 	{
-		auto active_runtime = xdg_config_home() / ("openxr/1/active_runtime" + get_abi(manifest) + ".json");
+		std::cerr << "Restoring " << manifest.string() << " from backup" << std::endl;
 		std::error_code ec;
-		if (std::filesystem::equivalent(manifest, active_runtime, ec))
-		{
-			std::cerr << "Removing stale file " << active_runtime << std::endl;
-			std::filesystem::remove(active_runtime, ec);
-		}
+		std::filesystem::remove(manifest, ec);
 		std::filesystem::rename(backup_name(manifest), manifest, ec);
+		if (ec)
+			std::cerr << "Failed to restore " << manifest.string() << ": " << ec.message() << std::endl;
 	}
 }
 

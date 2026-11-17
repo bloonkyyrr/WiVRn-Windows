@@ -19,14 +19,8 @@
 
 #include "audio_setup.h"
 
-#include "util/u_logging.h"
-#include "wivrn_config.h"
-
-#if defined(_WIN32)
 #include "audio_wasapi.h"
-#elif WIVRN_USE_PIPEWIRE
-#include "audio_pipewire.h"
-#endif
+#include "util/u_logging.h"
 
 std::unique_ptr<wivrn::audio_device> wivrn::audio_device::create(
         const std::string & source_name,
@@ -36,13 +30,8 @@ std::unique_ptr<wivrn::audio_device> wivrn::audio_device::create(
         const wivrn::from_headset::headset_info_packet & info,
         wivrn::wivrn_session & session)
 {
-#if defined(_WIN32)
 	if (auto res = create_wasapi_handle(source_name, source_description, sink_name, sink_description, info, session))
 		return res;
-#elif WIVRN_USE_PIPEWIRE
-	if (auto res = create_pipewire_handle(source_name, source_description, sink_name, sink_description, info, session))
-		return res;
-#endif
 	U_LOG_W("No audio backend available");
 	return nullptr;
 }

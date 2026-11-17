@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "wivrn",
+  "version-string": "0.0.0",
+  "description": "WiVRn PC server for Windows",
+  "homepage": "https://github.com/WiVRn/WiVRn",
+  "license": "GPL-3.0-or-later",
+  "dependencies": [
+    "boost-iostreams",
+    "boost-locale",
+    "boost-pfr",
+    "boost-url",
+    "cli11",
+    "eigen3",
+    "libarchive",
+    "libpng",
+    "nlohmann-json",
+    "openssl",
+    "x264",
+    {
+      "name": "cjson"
+    },
+    {
+      "name": "glslang"
+    },
+    {
+      "name": "vulkan"
+    },
+    {
+      "name": "pthreads",
+      "platform": "windows"
+    },
+    {
+      "name": "wil",
+      "platform": "windows"
+    }
+  ]
+}

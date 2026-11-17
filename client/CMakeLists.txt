@@ -1,3 +1,7 @@
+if(NOT ANDROID)
+    message(FATAL_ERROR "the WiVRn client builds for Android only")
+endif()
+
 set(KTX_FEATURE_STATIC_LIBRARY ON)
 set(KTX_FEATURE_TOOLS OFF)
 set(KTX_FEATURE_TESTS OFF)
@@ -37,103 +41,66 @@ include(I18n)
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
 
-if(ANDROID)
-    file(REMOVE_RECURSE ${RESOURCES_DIRECTORIES}/lib ${ANDROID_LIB_DIRECTORIES})
-    add_library(wivrn MODULE)
+file(REMOVE_RECURSE ${RESOURCES_DIRECTORIES}/lib ${ANDROID_LIB_DIRECTORIES})
+add_library(wivrn MODULE)
 
-    find_library(ANDROID_LIBRARY NAMES android REQUIRED)
-    find_library(MEDIA_LIBRARY NAMES mediandk REQUIRED)
-    find_library(AAUDIO_LIBRARY NAMES aaudio REQUIRED)
-    target_link_libraries(wivrn ${ANDROID_LIBRARY} ${MEDIA_LIBRARY} ${AAUDIO_LIBRARY})
+find_library(ANDROID_LIBRARY NAMES android REQUIRED)
+find_library(MEDIA_LIBRARY NAMES mediandk REQUIRED)
+find_library(AAUDIO_LIBRARY NAMES aaudio REQUIRED)
+target_link_libraries(wivrn ${ANDROID_LIBRARY} ${MEDIA_LIBRARY} ${AAUDIO_LIBRARY})
 
-    # The OpenXR loader must be dynamically loaded or the Oculus store will refuse it with "Oculus SDK not found or older than 1.0"
-    set(DYNAMIC_LOADER ON)
-    FetchContent_MakeAvailable(openxr_loader)
-    target_link_libraries(wivrn openxr_loader)
+# The OpenXR loader must be dynamically loaded or the Oculus store will refuse it with "Oculus SDK not found or older than 1.0"
+set(DYNAMIC_LOADER ON)
+FetchContent_MakeAvailable(openxr_loader)
+target_link_libraries(wivrn openxr_loader)
 
-    # libcurl
-    set(BUILD_CURL_EXE OFF)
-    set(BUILD_TESTING OFF)
-    set(CURL_DISABLE_INSTALL ON)
-    set(CURL_USE_LIBPSL OFF)
-    set(CURL_USE_LIBSSH2 OFF)
-    set(BUILD_EXAMPLES OFF)
+# libcurl
+set(BUILD_CURL_EXE OFF)
+set(BUILD_TESTING OFF)
+set(CURL_DISABLE_INSTALL ON)
+set(CURL_USE_LIBPSL OFF)
+set(CURL_USE_LIBSSH2 OFF)
+set(BUILD_EXAMPLES OFF)
 
-    FetchContent_MakeAvailable(curl)
-    target_link_libraries(wivrn libcurl_static)
+FetchContent_MakeAvailable(curl)
+target_link_libraries(wivrn libcurl_static)
 
-    target_link_libraries(wivrn native_app_glue)
-    target_compile_definitions(wivrn PRIVATE -DXR_USE_PLATFORM_ANDROID -DVK_USE_PLATFORM_ANDROID_KHR)
-    target_link_options(wivrn PRIVATE -Wl,--undefined=ANativeActivity_onCreate)
+target_link_libraries(wivrn native_app_glue)
+target_compile_definitions(wivrn PRIVATE -DXR_USE_PLATFORM_ANDROID -DVK_USE_PLATFORM_ANDROID_KHR)
+target_link_options(wivrn PRIVATE -Wl,--undefined=ANativeActivity_onCreate)
 
-    target_link_options(wivrn
-        PRIVATE
-        -Wl,--version-script,${CMAKE_CURRENT_SOURCE_DIR}/android/exported_symbols.txt
-        # This causes the linker to emit an error when a version script names a
-        # symbol that is not found, rather than silently ignoring that line.
-        -Wl,--no-undefined-version
+target_link_options(wivrn
+    PRIVATE
+    -Wl,--version-script,${CMAKE_CURRENT_SOURCE_DIR}/android/exported_symbols.txt
+    # This causes the linker to emit an error when a version script names a
+    # symbol that is not found, rather than silently ignoring that line.
+    -Wl,--no-undefined-version
+)
+set_target_properties(wivrn PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/exported_symbols.txt)
+
+file(GLOB PLATFORM_SOURCE CONFIGURE_DEPENDS
+    "android/*.cpp"
+    "audio/android/*.cpp"
+    "decoder/android/*.cpp"
     )
-    set_target_properties(wivrn PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/exported_symbols.txt)
+target_sources(wivrn PRIVATE ${PLATFORM_SOURCE})
 
-    file(GLOB PLATFORM_SOURCE CONFIGURE_DEPENDS
-        "android/*.cpp"
-        "audio/android/*.cpp"
-        "decoder/android/*.cpp"
-        )
-    target_sources(wivrn PRIVATE ${PLATFORM_SOURCE})
-
-    if (WIVRN_ADDRESS_SANITIZER)
-        file(MAKE_DIRECTORY
-            ${RESOURCES_DIRECTORIES}/lib/${CMAKE_ANDROID_ARCH_ABI}
-            ${ANDROID_LIB_DIRECTORIES}/${CMAKE_ANDROID_ARCH_ABI})
-        file(GLOB _asan_location
-            ${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/*/lib/linux/libclang_rt.asan-${CMAKE_SYSTEM_PROCESSOR}-android.so
-        )
-        file(COPY
-            ${_asan_location}
-            DESTINATION ${ANDROID_LIB_DIRECTORIES}/${CMAKE_ANDROID_ARCH_ABI}
-        )
-        file(COPY_FILE
-            ${ANDROID_NDK}/wrap.sh/asan.sh
-            ${RESOURCES_DIRECTORIES}/lib/${CMAKE_ANDROID_ARCH_ABI}/wrap.sh
-        )
-    endif()
-else()
-    add_executable(wivrn)
-
-    if (WIVRN_USE_SYSTEM_OPENXR)
-        target_link_libraries(wivrn OpenXR::openxr_loader OpenXR::headers)
-    else()
-        FetchContent_MakeAvailable(openxr_loader)
-        target_link_libraries(wivrn openxr_loader)
-    endif()
-
-    target_link_libraries(wivrn PkgConfig::LIBAV_CLIENT Fontconfig::Fontconfig CURL::libcurl)
-
-    file(GLOB PLATFORM_SOURCE CONFIGURE_DEPENDS
-        "decoder/ffmpeg/*.cpp")
-
-    if(WIVRN_USE_V4L2)
-        file(GLOB CLIENT_V4L2_SOURCE CONFIGURE_DEPENDS
-            "decoder/v4l2/*.cpp")
-        list(APPEND PLATFORM_SOURCE ${CLIENT_V4L2_SOURCE})
-        target_compile_definitions(wivrn PRIVATE WIVRN_USE_V4L2)
-    endif()
-
-    if(WIVRN_USE_PIPEWIRE)
-        file(GLOB CLIENT_PIPEWIRE_SOURCE CONFIGURE_DEPENDS
-            "audio/linux/*.cpp")
-        list(APPEND PLATFORM_SOURCE ${CLIENT_PIPEWIRE_SOURCE})
-        target_link_libraries(wivrn PkgConfig::libpipewire)
-        target_compile_definitions(wivrn PRIVATE WIVRN_USE_PIPEWIRE)
-    endif()
-
-    target_sources(wivrn PRIVATE ${PLATFORM_SOURCE})
-
-    file(CREATE_LINK ${CMAKE_CURRENT_BINARY_DIR}/share ${CMAKE_BINARY_DIR}/share SYMBOLIC)
+if (WIVRN_ADDRESS_SANITIZER)
+    file(MAKE_DIRECTORY
+        ${RESOURCES_DIRECTORIES}/lib/${CMAKE_ANDROID_ARCH_ABI}
+        ${ANDROID_LIB_DIRECTORIES}/${CMAKE_ANDROID_ARCH_ABI})
+    file(GLOB _asan_location
+        ${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/*/lib/linux/libclang_rt.asan-${CMAKE_SYSTEM_PROCESSOR}-android.so
+    )
+    file(COPY
+        ${_asan_location}
+        DESTINATION ${ANDROID_LIB_DIRECTORIES}/${CMAKE_ANDROID_ARCH_ABI}
+    )
+    file(COPY_FILE
+        ${ANDROID_NDK}/wrap.sh/asan.sh
+        ${RESOURCES_DIRECTORIES}/lib/${CMAKE_ANDROID_ARCH_ABI}/wrap.sh
+    )
 endif()
-
-
 
 ##############################################################################
 # Main sources
@@ -180,10 +147,6 @@ target_compile_definitions(wivrn PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 
 target_include_directories(wivrn PRIVATE .)
 
-if(NOT ANDROID)
-    install(TARGETS wivrn)
-endif()
-
 ##############################################################################
 # Dear ImGui
 #
@@ -202,17 +165,12 @@ target_sources(wivrn-imgui PRIVATE
 
 target_include_directories(wivrn-imgui PUBLIC ${imgui_SOURCE_DIR})
 target_include_directories(wivrn-imgui PUBLIC ${implot_SOURCE_DIR})
-# target_compile_definitions(wivrn-imgui PUBLIC "IMGUI_USER_CONFIG=\"render/imgui_config.h\"")
 target_compile_definitions(wivrn-imgui PUBLIC IMGUI_USE_WCHAR32)
 target_compile_definitions(wivrn-imgui PUBLIC IMGUI_ENABLE_FREETYPE)
-# target_compile_definitions(wivrn-imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS) # incompatible with implot
-# target_compile_definitions(wivrn-imgui PUBLIC IMGUI_ENABLE_FREETYPE_LUNASVG)
 target_compile_features(wivrn-imgui PRIVATE cxx_std_23)
 target_link_libraries(wivrn-imgui FreetypeHarfbuzz Vulkan::Vulkan)
 
 target_link_libraries(wivrn wivrn-imgui)
-
-
 
 ##############################################################################
 # Vulkan Validation Layer
@@ -253,13 +211,7 @@ endif()
 ##############################################################################
 # Assets
 #
-if(ANDROID)
-    set(ASSETS_DIR ${CMAKE_ANDROID_ASSETS_DIRECTORIES})
-else()
-    set(ASSETS_DIR ${CMAKE_CURRENT_BINARY_DIR}/share/wivrn/assets)
-    file(MAKE_DIRECTORY ${ASSETS_DIR})
-    install(DIRECTORY "${ASSETS_DIR}" DESTINATION "${CMAKE_INSTALL_DATADIR}/wivrn")
-endif()
+set(ASSETS_DIR ${CMAKE_ANDROID_ASSETS_DIRECTORIES})
 
 
 ##############################################################################
@@ -323,29 +275,4 @@ wivrn_webxr_controller(PROFILE samsung-galaxyxr        DESTINATION ${ASSETS_DIR}
 wivrn_webxr_controller(PROFILE yvr-touch-v2            DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
 
 # Add the VR splash screen (only used on Quest)
-if(ANDROID)
-    wivrn_copy_file(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/wivrn.png DESTINATION ${ASSETS_DIR}/vr_splash.png TARGET wivrn)
-endif()
-
-##############################################################################
-# Copy the assets to be able to find them when started from the build
-# directory
-if(NOT ANDROID)
-    file(GLOB_RECURSE ASSETS CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/../assets" "${CMAKE_CURRENT_SOURCE_DIR}/../assets/*" )
-
-    set(COPIED_ASSETS)
-
-    foreach(ASSET IN LISTS ASSETS)
-        add_custom_command(OUTPUT ${ASSETS_DIR}/${ASSET}
-            COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/../assets/${ASSET} ${ASSETS_DIR}/${ASSET}
-            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../assets/${ASSET})
-
-        set(COPIED_ASSETS ${COPIED_ASSETS} ${ASSETS_DIR}/${ASSET})
-    endforeach()
-    add_custom_target(assets-builddir ALL DEPENDS ${COPIED_ASSETS})
-    add_dependencies(wivrn assets-builddir)
-
-    set_target_properties(wivrn PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-
-    install(DIRECTORY "${ASSETS_DIR}" DESTINATION ${CMAKE_INSTALL_DATADIR}/wivrn)
-endif()
+wivrn_copy_file(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/wivrn.png DESTINATION ${ASSETS_DIR}/vr_splash.png TARGET wivrn)

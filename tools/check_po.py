@@ -55,7 +55,6 @@ if __name__ == "__main__":
         return_code = 0
 
         client_pot = os.path.join(tmpdir, "client.pot")
-        dashboard_pot = os.path.join(tmpdir, "dashboard.pot")
 
         subprocess.check_call(
             [
@@ -76,32 +75,12 @@ if __name__ == "__main__":
             + sorted(list_files(os.path.join(root, "client"), ".cpp"))
         )
 
-        subprocess.check_call(
-            [
-                "xgettext",
-                "--c++",
-                "--kde",
-                "--from-code=UTF-8",
-                "--keyword=i18n:1",
-                "--keyword=i18nc:1c,2",
-                "--keyword=i18np:1,2",
-                "--keyword=i18ncp:1c,2,3",
-                "--output",
-                dashboard_pot,
-                "--package-name=WiVRn-dashboard",
-            ]
-            + sorted(list_files(os.path.join(root, "dashboard"), [".cpp", ".qml"]))
-        )
 
         client_ref = polib.pofile(client_pot)
-        dashboard_ref = polib.pofile(dashboard_pot)
 
         for lang in args.lang:
             lang_issues = {}
-            for po_ref, po in (
-                (client_ref, os.path.join(locale_dir, lang, "wivrn.po")),
-                (dashboard_ref, os.path.join(locale_dir, lang, "wivrn-dashboard.po")),
-            ):
+            for po_ref, po in ((client_ref, os.path.join(locale_dir, lang, "wivrn.po")),):
                 if not os.path.exists(po):
                     continue
                 po_file = polib.pofile(po)

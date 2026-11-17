@@ -14,37 +14,9 @@ if(ANDROID)
     list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/android)
 endif()
 
-# Platform defaults. On Windows the Linux-only subsystems stay disabled until
-# their native implementations land, so the server can be configured and built
-# incrementally. See docs/windows.md.
-if(WIN32)
-    set(WIVRN_DEFAULT_VAAPI        OFF)
-    set(WIVRN_DEFAULT_PIPEWIRE     OFF)
-    set(WIVRN_DEFAULT_SYSTEMD      OFF)
-    set(WIVRN_DEFAULT_LIGHTHOUSE   OFF)
-    set(WIVRN_DEFAULT_AVAHI        OFF)
-    set(WIVRN_DEFAULT_GLIB         OFF)
-    set(WIVRN_DEFAULT_LIBNOTIFY    OFF)
-    set(WIVRN_DEFAULT_LIBRSVG      OFF)
-    set(WIVRN_DEFAULT_COLOUR       OFF)
-    set(WIVRN_DEFAULT_WIVRNCTL     OFF)
-    if(NOT DEFINED WIVRN_BUILD_CLIENT)
-        set(WIVRN_BUILD_CLIENT OFF)
-    endif()
-    if(NOT DEFINED WIVRN_BUILD_DASHBOARD)
-        set(WIVRN_BUILD_DASHBOARD OFF)
-    endif()
-else()
-    set(WIVRN_DEFAULT_VAAPI        ON)
-    set(WIVRN_DEFAULT_PIPEWIRE     ON)
-    set(WIVRN_DEFAULT_SYSTEMD      ON)
-    set(WIVRN_DEFAULT_LIGHTHOUSE   ON)
-    set(WIVRN_DEFAULT_AVAHI        ON)
-    set(WIVRN_DEFAULT_GLIB         ON)
-    set(WIVRN_DEFAULT_LIBNOTIFY    ON)
-    set(WIVRN_DEFAULT_LIBRSVG      ON)
-    set(WIVRN_DEFAULT_COLOUR       ON)
-    set(WIVRN_DEFAULT_WIVRNCTL     ON)
+# WiVRn builds the PC server for Windows and the headset client for Android.
+if(NOT WIN32 AND NOT ANDROID)
+    message(FATAL_ERROR "WiVRn supports Windows (server) and Android (client) only; see docs/windows.md")
 endif()
 
 # Default to PIC code
@@ -71,11 +43,9 @@ option(WIVRN_USE_SYSTEM_LIBKTX "Use system KTX-Software library" ON)
 option(WIVRN_COMPRESS_GLB "Compress textures in GLB files with gltf-transform" OFF)
 option(WIVRN_USE_ANDROID_VALIDATION_LAYER "Download the android version of the Vulkan validation layer" OFF)
 option(WIVRN_USE_ANDROID_BIN_LIBKTX "Download the prebuilt libktx for android" OFF)
-option(WIVRN_BUILD_CLIENT "Build WiVRn client" OFF)
+option(WIVRN_BUILD_CLIENT "Build WiVRn client" ${ANDROID})
 option(WIVRN_BUILD_SERVER "Build WiVRn server" ON)
 option(WIVRN_BUILD_SERVER_LIBRARY "Build OpenXR library for WiVRn server" ${WIVRN_BUILD_SERVER})
-option(WIVRN_BUILD_DASHBOARD "Build WiVRn dashboard" OFF)
-option(WIVRN_BUILD_WIVRNCTL "Build wivrnctl" ${WIVRN_DEFAULT_WIVRNCTL})
 option(WIVRN_BUILD_DISSECTOR "Build Wireshark dissector" OFF)
 option(WIVRN_BUILD_TEST "Build test binaries" OFF)
 option(WIVRN_WERROR "Treat warnings as errors" OFF)
@@ -83,43 +53,30 @@ option(WIVRN_OPTIMIZE_SHADERS "Run spirv-opt on compiled shaders" ON)
 option(WIVRN_DEBUG_SHADERS "Compile shaders with debug information" OFF)
 option(WIVRN_ADDRESS_SANITIZER "Use address sanitizer" OFF)
 
-# V4L2 decoder on by default on Linux AArch64
-set(_WIVRN_USE_V4L2_DEFAULT OFF)
-if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" AND NOT ANDROID AND NOT WIN32)
-    set(_WIVRN_USE_V4L2_DEFAULT ON)
-endif()
-option(WIVRN_USE_V4L2 "Enable V4L2 hardware video decoder" ${_WIVRN_USE_V4L2_DEFAULT})
-option(WIVRN_USE_AVAHI "Enable Avahi mDNS service publication" ${WIVRN_DEFAULT_AVAHI})
-option(WIVRN_USE_GLIB "Enable GLib/DBus integration" ${WIVRN_DEFAULT_GLIB})
-option(WIVRN_USE_LIBNOTIFY "Enable desktop notifications" ${WIVRN_DEFAULT_LIBNOTIFY})
-option(WIVRN_USE_LIBRSVG "Enable librsvg icon rendering" ${WIVRN_DEFAULT_LIBRSVG})
-unset(_WIVRN_USE_V4L2_DEFAULT)
-
-if(WIVRN_OPTIMIZE_SHADERS AND WIVRN_DEBUG_SHADERS)
-    message(FATAL_ERROR "WIVRN_OPTIMIZE_SHADERS and WIVRN_DEBUG_SHADERS are incompatible")
-endif()
-
 option(WIVRN_USE_NVENC "Enable nvenc (Nvidia) hardware encoder" ON)
-option(WIVRN_USE_VAAPI "Enable vaapi (AMD/Intel) hardware encoder" ${WIVRN_DEFAULT_VAAPI})
 option(WIVRN_USE_VULKAN_ENCODE "Enable vulkan video encoder" ON)
 option(WIVRN_USE_X264 "Enable x264 software encoder" ON)
 
 option(WIVRN_USE_PERFETTO "Enable Perfetto tracing via the Perfetto SDK (server only)" OFF)
-option(WIVRN_TRACE_MONADO "Also instrument Monado (percetto) under the same WIVRN_TRACING switch; pulls in a second Perfetto runtime, system backend only. Requires WIVRN_USE_PERFETTO" OFF)
+option(WIVRN_TRACE_MONADO "Also instrument Monado (percetto) under the same WIVRN_TRACING switch. Requires WIVRN_USE_PERFETTO" OFF)
 if(WIVRN_TRACE_MONADO AND NOT WIVRN_USE_PERFETTO)
 	message(FATAL_ERROR "WIVRN_TRACE_MONADO=ON requires WIVRN_USE_PERFETTO=ON")
 endif()
 
-option(WIVRN_USE_PIPEWIRE "Enable pipewire backend" ${WIVRN_DEFAULT_PIPEWIRE})
-option(WIVRN_USE_SYSTEMD "Enable systemd integration" ${WIVRN_DEFAULT_SYSTEMD})
+# Hardware encoder and audio backends that only exist on Linux. They are kept as
+# compile-time constants so that shared code can keep its #if branches.
+set(WIVRN_USE_VAAPI OFF)
+set(WIVRN_USE_PIPEWIRE OFF)
 
-set(OVR_COMPAT_SEARCH_PATH "/opt/xrizer:/usr/local/lib/OpenComposite:/usr/lib/OpenComposite:/opt/OpenComposite:/opt/opencomposite:/opt/VapoR:/usr/local/lib/VapoR"
-    CACHE STRING "List of places to search for the OpenVR compatibility layer, separated by :")
+# OpenVR compatibility layers: ';'-separated directories containing
+# bin/win64/vrclient_x64.dll (xrizer, OpenComposite).
+set(OVR_COMPAT_SEARCH_PATH "C:/Program Files/OpenComposite;C:/Program Files/xrizer"
+    CACHE STRING "Where to look for the OpenVR compatibility layer, separated by ;")
 
 option(WIVRN_FEATURE_DEBUG_GUI "Enable Monado debug GUI" OFF)
 option(WIVRN_FEATURE_RENDERDOC "Support renderdoc" OFF)
 option(WIVRN_FEATURE_SOLARXR "Enable SolarXR driver" ON)
-option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" ${WIVRN_DEFAULT_LIGHTHOUSE})
+option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" OFF)
 
 set(WIVRN_CSS "${CMAKE_SOURCE_DIR}/images/wivrn-local.css" CACHE STRING "Stylesheet to use to render SVGs" )
 
@@ -133,27 +90,14 @@ if (NOT WIVRN_OPENXR_MANIFEST_TYPE IN_LIST WIVRN_OPENXR_MANIFEST_TYPE_VALUES)
 endif()
 option(WIVRN_OPENXR_MANIFEST_ABI "Generate an ABI specific OpenXR manifest")
 
-option(ENABLE_COLOURED_OUTPUT "Always produce ANSI-coloured output (GNU/Clang only)." ${WIVRN_DEFAULT_COLOUR})
-
 set(WIVRN_ENVIRONMENTS_URL "https://github.com/WiVRn/WiVRn-environments/releases/latest/download/index.json" CACHE STRING "URL hosting the custom environments json file")
 
-if (WIVRN_BUILD_CLIENT OR WIVRN_BUILD_SERVER OR WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_DISSECTOR)
+if (WIVRN_BUILD_CLIENT OR WIVRN_BUILD_SERVER OR WIVRN_BUILD_DISSECTOR)
     set(NEED_COMMON TRUE)
 else()
     set(NEED_COMMON FALSE)
 endif()
 
-if(ENABLE_COLOURED_OUTPUT)
-	if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-		add_compile_options(-fdiagnostics-color=always)
-	elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-		add_compile_options(-fcolor-diagnostics)
-	endif()
-endif()
-
-if(NOT WIN32)
-    find_package(PkgConfig REQUIRED)
-endif()
 find_package(Vulkan REQUIRED)
 find_package(Git)
 if (NEED_COMMON)
@@ -170,81 +114,30 @@ if (WIVRN_USE_SYSTEM_BOOST AND NEED_COMMON)
 endif()
 
 if (WIVRN_BUILD_SERVER)
-    if(WIVRN_USE_GLIB)
-        find_program(GDBUS_CODEGEN gdbus-codegen REQUIRED)
-    endif()
     if (Vulkan_VERSION  VERSION_LESS "1.4.304")
         message(FATAL_ERROR "Vulkan version must be at least 1.4.304, found ${Vulkan_VERSION}")
     endif()
 
-    if (NOT WIVRN_USE_NVENC AND NOT WIVRN_USE_VAAPI AND NOT WIVRN_USE_X264 AND NOT WIVRN_USE_VULKAN_ENCODE)
-        message(FATAL_ERROR "No encoder selected, use at least one of WIVRN_USE_NVENC, WIVRN_USE_VAAPI, WIVRN_USE_VULKAN_ENCODE or WIVRN_USE_X264")
-    endif()
-
-    if (WIVRN_USE_VAAPI)
-        pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavcodec libavutil)
-        pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
+    if (NOT WIVRN_USE_NVENC AND NOT WIVRN_USE_X264 AND NOT WIVRN_USE_VULKAN_ENCODE)
+        message(FATAL_ERROR "No encoder selected, use at least one of WIVRN_USE_NVENC, WIVRN_USE_VULKAN_ENCODE or WIVRN_USE_X264")
     endif()
 
     if (WIVRN_USE_X264)
-        if(WIN32)
-            find_package(x264 REQUIRED)
-        else()
-            pkg_check_modules(X264 REQUIRED IMPORTED_TARGET x264)
-        endif()
+        find_package(x264 REQUIRED)
     endif()
 
-    if (WIVRN_USE_AVAHI)
-        pkg_check_modules(AVAHI REQUIRED IMPORTED_TARGET avahi-client avahi-glib)
-    endif()
     find_package(Eigen3 REQUIRED)
     find_package(nlohmann_json REQUIRED)
     find_package(CLI11 REQUIRED)
-
-    if (WIVRN_USE_GLIB)
-        pkg_check_modules(glib2 REQUIRED IMPORTED_TARGET glib-2.0 gio-2.0 gio-unix-2.0)
-    endif()
-
-    if (WIVRN_USE_LIBNOTIFY)
-        pkg_check_modules(libnotify REQUIRED IMPORTED_TARGET libnotify)
-    endif()
 endif()
 
-if (WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_SERVER)
-    if (WIVRN_USE_LIBRSVG)
-        pkg_check_modules(librsvg-2.0 REQUIRED IMPORTED_TARGET librsvg-2.0)
-    endif()
+if (WIVRN_BUILD_SERVER)
     find_package(LibArchive REQUIRED)
     find_package(PNG REQUIRED)
 endif()
 
-if (WIVRN_BUILD_DASHBOARD)
-    find_package(Qt6 REQUIRED COMPONENTS Core Quick Test Gui QuickControls2 Widgets Network)
-
-    if(Qt6_VERSION VERSION_GREATER_EQUAL 6.10.0)
-        # QtCoro needs this for Qt 6.10 and (currently) doesn't do this by itself
-        find_package(Qt6 REQUIRED COMPONENTS QmlPrivate)
-    endif()
-
-    find_package(ECM 5.115 REQUIRED NO_MODULE)
-    list(APPEND CMAKE_MODULE_PATH "${ECM_MODULE_PATH}")
-
-    find_package(KF6 REQUIRED COMPONENTS Kirigami I18n CoreAddons QQC2DesktopStyle IconThemes)
-    find_package(KF6Kirigami)
-    find_package(nlohmann_json REQUIRED)
-    find_package(QCoro6 REQUIRED COMPONENTS Core Network Qml)
-    qcoro_enable_coroutines()
-endif()
-
-if (WIVRN_BUILD_CLIENT OR WIVRN_BUILD_DASHBOARD)
-    find_package(Gettext REQUIRED)
-endif()
-
-if (WIVRN_USE_PIPEWIRE AND NOT WIN32 AND (WIVRN_BUILD_SERVER OR (WIVRN_BUILD_CLIENT AND NOT ANDROID)))
-    pkg_check_modules(libpipewire REQUIRED IMPORTED_TARGET libpipewire-0.3)
-endif()
-
 if (WIVRN_BUILD_CLIENT)
+    find_package(Gettext REQUIRED)
     find_program(RSVG_CONVERT rsvg-convert REQUIRED)
     find_program(KTX ktx REQUIRED)
 
@@ -254,19 +147,6 @@ if (WIVRN_BUILD_CLIENT)
 
     if(NOT ANDROID)
         find_package(CURL REQUIRED COMPONENTS HTTP HTTPS)
-    endif()
-endif()
-
-if (WIVRN_BUILD_CLIENT AND NOT ANDROID)
-    pkg_check_modules(LIBAV_CLIENT REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
-    find_package(Fontconfig REQUIRED)
-
-    if (WIVRN_USE_SYSTEM_OPENXR)
-        find_package(OpenXR 1.1.58 REQUIRED)
-    endif()
-
-    if (WIVRN_USE_SYSTEM_LIBKTX)
-        find_package(Ktx REQUIRED)
     endif()
 endif()
 
@@ -282,13 +162,6 @@ if (WIVRN_BUILD_DISSECTOR)
         find_package(OpenXR 1.1.53 REQUIRED)
     endif()
     find_package(Wireshark REQUIRED)
-endif()
-
-if (WIVRN_BUILD_WIVRNCTL)
-    find_package(CLI11 REQUIRED)
-    if(NOT WIN32)
-        pkg_search_module(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd libelogind)
-    endif()
 endif()
 
 # Common dependencies
@@ -318,7 +191,7 @@ FetchContent_Declare(implot        EXCLUDE_FROM_ALL SYSTEM URL https://github.co
 file(GLOB IMGUI_PATCHES CONFIGURE_DEPENDS patches/imgui/*)
 FetchContent_Declare(imgui         EXCLUDE_FROM_ALL SYSTEM URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9.tar.gz
                                    URL_HASH SHA256=af97ed649182c39314320514a672b82008ab462b9293fe23d37b30bfa5d05519
-                                   PATCH_COMMAND    ${CMAKE_CURRENT_LIST_DIR}/patches/apply.sh ${IMGUI_PATCHES}
+                                   PATCH_COMMAND    "${CMAKE_COMMAND}" "-DPATCHES=${IMGUI_PATCHES}" -P "${CMAKE_CURRENT_LIST_DIR}/patches/apply.cmake"
 )
 FetchContent_Declare(uni-algo      EXCLUDE_FROM_ALL SYSTEM URL https://github.com/uni-algo/uni-algo/archive/v1.2.0.tar.gz
                                    URL_HASH SHA256=f2a1539cd8635bc6088d05144a73ecfe7b4d74ee0361fabed6f87f9f19e74ca9)
@@ -335,9 +208,8 @@ file(STRINGS monado-rev MONADO_REV)
 # Server dependencies
 FetchContent_Declare(monado
     GIT_REPOSITORY   https://gitlab.freedesktop.org/monado/monado.git
-    # The flatpak manifest is updated automatically
     GIT_TAG          ${MONADO_REV}
-    PATCH_COMMAND    ${CMAKE_CURRENT_LIST_DIR}/patches/apply.sh ${MONADO_PATCHES}
+    PATCH_COMMAND    "${CMAKE_COMMAND}" "-DPATCHES=${MONADO_PATCHES}" -P "${CMAKE_CURRENT_LIST_DIR}/patches/apply.cmake"
     EXCLUDE_FROM_ALL
 )
 
@@ -372,23 +244,16 @@ if (WIVRN_BUILD_SERVER OR WIVRN_BUILD_SERVER_LIBRARY)
     if (WIVRN_BUILD_SERVER)
         message(STATUS "Selected encoders:")
         message(STATUS "\tNVENC : ${WIVRN_USE_NVENC}")
-        message(STATUS "\tVAAPI : ${WIVRN_USE_VAAPI}")
         message(STATUS "\tVulkan: ${WIVRN_USE_VULKAN_ENCODE}")
         message(STATUS "\tx264  : ${WIVRN_USE_X264}")
         message(STATUS "")
-        message(STATUS "Audio backends:")
-        message(STATUS "\tPipewire  : ${WIVRN_USE_PIPEWIRE}")
+        message(STATUS "Audio backend: WASAPI")
     endif()
-endif()
-
-if (WIVRN_BUILD_DASHBOARD)
-    add_subdirectory(dashboard)
-    set_target_properties(wivrn-dashboard PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/server)
 endif()
 
 add_subdirectory(tools)
 
-foreach(TARGET_NAME wivrn wivrn-server wivrn-dashboard wivrn-common wivrn-dissector wivrnctl)
+foreach(TARGET_NAME wivrn wivrn-server wivrn-common wivrn-dissector)
     if(TARGET ${TARGET_NAME})
         if(MSVC)
             target_compile_options(${TARGET_NAME} PRIVATE
@@ -406,7 +271,6 @@ foreach(TARGET_NAME wivrn wivrn-server wivrn-dashboard wivrn-common wivrn-dissec
                 -Wno-comment
                 -Wno-unused-variable
                 -Wno-sign-compare
-                $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-volatile -Wno-array-bounds>
                 $<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wno-deprecated-volatile -Wno-unneeded-internal-declaration -Wno-c99-extensions -Wno-unused-private-field>
             )
         endif()
@@ -430,3 +294,7 @@ foreach(TARGET_NAME wivrn wivrn-server wivrn-dashboard wivrn-common wivrn-dissec
 
     endif()
 endforeach()
+
+if(WIN32 AND WIVRN_BUILD_SERVER)
+    include(Packaging)
+endif()

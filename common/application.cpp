@@ -19,208 +19,150 @@
 
 #include "application.h"
 
-#include "utils/flatpak.h"
 #include "utils/steam_info.h"
-#include "utils/xdg_base_directory.h"
-#include "utils/xdg_icon_lookup.h"
 
+#include <windows.h>
+
+#include <shlobj.h>
+#include <shobjidl.h>
+
+#include <cstdlib>
 #include <filesystem>
-#include <fstream>
-#include <nlohmann/json.hpp>
+#include <iterator>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace wivrn
 {
-
 namespace
 {
-std::string read_file(const std::filesystem::path & path)
+std::wstring to_wide(const std::string & value)
 {
-	std::ifstream f(path);
-	std::istreambuf_iterator<char> begin{f}, end;
+	if (value.empty())
+		return {};
 
-	return {begin, end};
+	int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), nullptr, 0);
+	if (size <= 0)
+		return {};
+	std::wstring result(size, L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), result.data(), size);
+	return result;
 }
 
-std::string unescape(std::string_view in)
+std::string to_utf8(const std::wstring & value)
 {
-	std::string out;
-	out.reserve(in.size());
-	for (auto c = in.begin(); c != in.end(); ++c)
-	{
-		if (*c == '\\')
-		{
-			++c;
-			if (c == in.end())
-				break;
-			switch (*c)
-			{
-				case 's':
-					out += ' ';
-					break;
-				case 'n':
-					out += '\n';
-					break;
-				case 't':
-					out += '\t';
-					break;
-				case 'r':
-					out += '\r';
-					break;
-				default:
-					out += *c;
-			}
-		}
-		else
-		{
-			out += *c;
-		}
-	}
-	return out;
+	if (value.empty())
+		return {};
+
+	int size = WideCharToMultiByte(CP_UTF8, 0, value.data(), (int)value.size(), nullptr, 0, nullptr, nullptr);
+	if (size <= 0)
+		return {};
+	std::string result(size, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, value.data(), (int)value.size(), result.data(), size, nullptr, nullptr);
+	return result;
 }
 
-struct key_value
+/// Scoped COM initialisation; the shell interfaces used below need an apartment.
+class com_scope
 {
-	std::string_view key;
-	std::string_view locale;
-	std::string_view value;
-	key_value(std::string_view l)
+	bool uninitialize = false;
+
+public:
+	com_scope()
 	{
-		auto pos = l.find_first_of("[ =");
-		if (pos == std::string_view::npos)
-			return;
-		key = l.substr(0, pos);
-		l = l.substr(pos);
-		if (l[0] == '[')
-		{
-			pos = l.find(']');
-			if (pos == std::string_view::npos)
-			{
-				key = std::string_view();
-				return;
-			}
-			locale = l.substr(1, pos - 1);
-			l = l.substr(pos + 1);
-		}
-		pos = l.find('=');
-		if (pos == std::string_view::npos)
-		{
-			key = std::string_view();
-			locale = std::string_view();
-			return;
-		}
-		l = l.substr(pos + 1);
-		pos = l.find_first_not_of(" ");
-		if (pos == std::string_view::npos)
-		{
-			key = std::string_view();
-			locale = std::string_view();
-			return;
-		}
-		value = l.substr(pos);
+		HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+		// RPC_E_CHANGED_MODE means another thread already used another model.
+		uninitialize = SUCCEEDED(hr);
 	}
+	~com_scope()
+	{
+		if (uninitialize)
+			CoUninitialize();
+	}
+
+	com_scope(const com_scope &) = delete;
+	com_scope & operator=(const com_scope &) = delete;
 };
 
-bool contains(std::string_view entries, std::string_view val, char sep = ';')
+std::vector<std::filesystem::path> start_menu_directories()
 {
-	for (auto bounds: entries | std::views::split(sep))
+	std::vector<std::filesystem::path> result;
+
+	for (auto csidl: {CSIDL_COMMON_PROGRAMS, CSIDL_PROGRAMS})
 	{
-		if (std::string_view(bounds.begin(), bounds.end()) == val)
-			return true;
+		char buffer[MAX_PATH]{};
+		if (SHGetSpecialFolderPathA(nullptr, buffer, csidl, FALSE))
+			result.emplace_back(buffer);
 	}
-	return false;
+
+	// SHGetSpecialFolderPath already covers these, but a redirected Start Menu
+	// is not always reported; add the environment-based locations as well.
+	for (const char * variable: {"ProgramData", "APPDATA"})
+	{
+		if (const char * value = std::getenv(variable); value and *value)
+		{
+			auto path = std::filesystem::path(value) / "Microsoft" / "Windows" / "Start Menu" / "Programs";
+			if (std::filesystem::is_directory(path))
+				result.push_back(std::move(path));
+		}
+	}
+
+	return result;
 }
 
-std::optional<application> do_desktop_entry(const std::filesystem::path & filename)
+struct shortcut
 {
-	auto data = read_file(filename);
-	std::optional<application> res;
+	std::filesystem::path target;
+	std::string arguments;
+	std::string working_directory;
+};
 
-	// Most apps are not VR, don't bother parsing the rest
-	bool vr = false;
-	for (auto bounds: data | std::views::split('\n'))
+std::optional<shortcut> read_shortcut(const std::filesystem::path & path)
+{
+	com_scope com;
+
+	IShellLinkW * link = nullptr;
+	if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))))
+		return {};
+
+	std::optional<shortcut> result;
+
+	IPersistFile * persist = nullptr;
+	if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&persist))))
 	{
-		std::string_view line(bounds.begin(), bounds.end());
-		key_value item(line);
-		if (item.key == "Categories")
-			vr = contains(item.value, "X-WiVRn-VR");
-	}
-	if (not vr)
-		return res;
-
-	res.emplace();
-	for (auto bounds: data | std::views::split('\n'))
-	{
-		std::string_view line(bounds.begin(), bounds.end());
-		if (line.empty())
-			continue;
-		if (line.starts_with("#"))
-			continue;
-
-		// Only process the main section
-		if (line.starts_with("[") and line != "[Desktop Entry]")
-			break;
-
-		key_value item(line);
-		if (item.key == "Type" and item.value != "Application")
+		auto wide_path = path.wstring();
+		if (SUCCEEDED(persist->Load(wide_path.c_str(), STGM_READ)))
 		{
-			res.reset();
-			return res;
-		}
-		if (item.key == "Name")
-			res->name.emplace(item.locale, unescape(item.value));
-		if (item.key == "Exec")
-			res->exec = unescape(item.value);
-		if (item.key == "Path")
-			res->path = unescape(item.value);
-		if (item.key == "Icon")
-		{
-			try
+			wchar_t buffer[MAX_PATH * 2];
+			WIN32_FIND_DATAW data{};
+
+			// GetPath fails for URL and shell shortcuts, which are not launched
+			// as processes by the server.
+			if (SUCCEEDED(link->GetPath(buffer, (int)std::size(buffer), &data, SLGP_RAWPATH)) and buffer[0] != L'\0')
 			{
-				res->icon_path = xdg_icon_lookup(std::string{item.value}, 256);
+				shortcut entry;
+				entry.target = std::filesystem::path(buffer);
+
+				if (SUCCEEDED(link->GetArguments(buffer, (int)std::size(buffer))))
+					entry.arguments = to_utf8(buffer);
+				if (SUCCEEDED(link->GetWorkingDirectory(buffer, (int)std::size(buffer))))
+					entry.working_directory = to_utf8(buffer);
+
+				result = std::move(entry);
 			}
-			catch (...)
-			{}
 		}
+		persist->Release();
 	}
 
-	if (res->exec.empty() or not res->name.contains(""))
-		res.reset();
-
-	return res;
+	link->Release();
+	return result;
 }
 
-void do_data_dir(std::filesystem::path dir, std::unordered_map<std::string, application> & res)
+bool is_uninstaller(const std::filesystem::path & target)
 {
-	dir = dir / "applications";
-	if (not std::filesystem::is_directory(dir))
-		return;
-	try
-	{
-		for (const auto & entry: std::filesystem::recursive_directory_iterator(dir, std::filesystem::directory_options::skip_permission_denied))
-		{
-			if (entry.is_directory())
-				continue;
-
-			if (entry.path().extension() != ".desktop")
-				continue;
-
-			// https://specifications.freedesktop.org/desktop-entry-spec/latest/file-naming.html#desktop-file-id
-			auto file_id = entry.path()
-			                       .lexically_relative(dir)
-			                       .replace_extension("")
-			                       .string();
-			std::ranges::replace(file_id, '/', '-');
-
-			if (res.contains(file_id))
-				continue;
-
-			auto app = do_desktop_entry(entry.path());
-			if (app)
-				res.emplace(std::move(file_id), std::move(*app));
-		}
-	}
-	catch (std::exception & ex)
-	{}
+	auto name = target.filename().string();
+	return name.starts_with("unins") or name.starts_with("Uninstall") or name.starts_with("uninstall");
 }
 } // namespace
 
@@ -242,13 +184,52 @@ std::unordered_map<std::string, application> list_applications()
 		}
 	}
 
-	for (auto && dir: xdg_data_dirs())
-		do_data_dir(std::move(dir), res);
-
-	if (wivrn::is_flatpak())
+	for (const auto & directory: start_menu_directories())
 	{
-		// Try to guess host data dirs
-		do_data_dir("/run/host/usr/share", res);
+		std::error_code ec;
+		if (not std::filesystem::is_directory(directory, ec))
+			continue;
+
+		for (std::filesystem::recursive_directory_iterator entry(directory,
+		                                                          std::filesystem::directory_options::skip_permission_denied,
+		                                                          ec),
+		     end;
+		     entry != end;
+		     entry.increment(ec))
+		{
+			if (ec)
+				break;
+
+			if (not entry->is_regular_file(ec))
+				continue;
+			if (entry->path().extension() != ".lnk")
+				continue;
+
+			auto shortcut = read_shortcut(entry->path());
+			if (not shortcut)
+				continue;
+			if (shortcut->target.extension() != ".exe")
+				continue;
+			if (is_uninstaller(shortcut->target))
+				continue;
+
+			auto name = entry->path().stem().string();
+			if (name.empty())
+				continue;
+
+			application app;
+			app.name[""] = std::move(name);
+			app.exec = "\"" + shortcut->target.string() + "\"";
+			if (not shortcut->arguments.empty())
+				app.exec += " " + shortcut->arguments;
+
+			if (not shortcut->working_directory.empty())
+				app.path = shortcut->working_directory;
+			else
+				app.path = shortcut->target.parent_path().string();
+
+			res.emplace("shortcut:" + entry->path().string(), std::move(app));
+		}
 	}
 
 	return res;

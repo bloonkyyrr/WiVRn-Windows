@@ -21,16 +21,28 @@
 #include "platform.h"
 
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace wivrn
 {
 
+/// Makes WiVRn the active OpenXR (and OpenVR) runtime while a session runs.
+///
+/// On Windows the OpenXR loader resolves the runtime from
+/// HKLM\SOFTWARE\Khronos\OpenXR\1\ActiveRuntime, and honours the
+/// XR_RUNTIME_JSON environment variable before that. The registry needs
+/// administrator rights, so the variable is always set (it is inherited by the
+/// applications the server launches) and the registry is updated opportunistically.
 class active_runtime
 {
 	std::vector<std::filesystem::path> active_runtime_json;
 	std::filesystem::path openvr_manifest;
 	platform::process_id pid;
+
+	bool registry_updated = false;
+	std::optional<std::string> previous_xr_runtime_json;
 
 public:
 	active_runtime();

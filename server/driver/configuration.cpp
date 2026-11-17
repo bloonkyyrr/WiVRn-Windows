@@ -34,8 +34,10 @@
 
 #include "util/u_logging.h"
 
-#include "utils/xdg_base_directory.h"
+#include "platform.h"
 #include "wivrn_config.h"
+
+#include <windows.h>
 
 static auto resolve_path(std::filesystem::path path)
 {
@@ -49,9 +51,19 @@ static auto resolve_path(std::filesystem::path path)
 	return canonical;
 }
 
+/// <executable directory>/share, where the installer puts the read-only data files.
+static std::filesystem::path install_share_directory()
+{
+	char buffer[MAX_PATH]{};
+	DWORD length = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+	if (length == 0 or length >= MAX_PATH)
+		return std::filesystem::path(WIVRN_INSTALL_PREFIX) / "share";
+	return std::filesystem::path(buffer).parent_path() / "share";
+}
+
 static std::filesystem::path config_file;
-static std::filesystem::path known_keys_file = resolve_path(xdg_config_home() / "wivrn" / "known_keys.json");
-static std::filesystem::path cookie_file = resolve_path(xdg_config_home() / "wivrn" / "cookie");
+static std::filesystem::path known_keys_file = resolve_path(wivrn::platform::config_directory() / "known_keys.json");
+static std::filesystem::path cookie_file = resolve_path(wivrn::platform::config_directory() / "cookie");
 
 namespace wivrn
 {
@@ -74,7 +86,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM(
                 {service_publication(-1), ""},
                 {service_publication::none, nullptr},
                 {service_publication::none, "none"},
-                {service_publication::avahi, "avahi"},
+                {service_publication::mdns, "mdns"},
         })
 
 void configuration::set_config_file(const std::filesystem::path & path)
@@ -84,7 +96,7 @@ void configuration::set_config_file(const std::filesystem::path & path)
 std::filesystem::path configuration::get_config_file()
 {
 	if (config_file.empty())
-		return resolve_path(xdg_config_home() / "wivrn" / "config.json");
+		return resolve_path(platform::config_directory() / "config.json");
 	return config_file;
 }
 
@@ -94,9 +106,8 @@ nlohmann::json configuration::read_configuration()
 	{
 		nlohmann::json merged;
 		for (std::filesystem::path prefix: {
-		             std::filesystem::path(WIVRN_INSTALL_PREFIX "/share"),
-		             std::filesystem::path("/etc"),
-		             xdg_config_home(),
+		             install_share_directory(),
+		             platform::config_directory().parent_path(),
 		     })
 		{
 			auto path = resolve_path(prefix / "wivrn" / "config.json");
@@ -190,8 +201,8 @@ configuration::configuration()
 			}
 		}
 
-		// Gates the uinput mirror of forwarded input devices. The OpenXR gamepad needs no
-		// permission, so it is always exposed.
+		// Gates mirroring of forwarded input devices to the desktop. The OpenXR
+		// gamepad is part of the session and needs no permission, so it is always exposed.
 		if (auto it = json.find("hid-forwarding"); it != json.end())
 			hid_forwarding = *it;
 
