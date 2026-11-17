@@ -225,7 +225,7 @@ std::vector<std::pair<ImVec2, float>> imgui_context::ray_plane_intersection(cons
 
 		auto M = glm::transpose(glm::mat3_cast(i.orientation)); // world-to-plane transform
 
-		glm::quat q = (in.source == ImGuiMouseSource_VRHandTracking) ? i.orientation : in.aim_orientation;
+		glm::quat q = (in.source == static_cast<ImGuiMouseSource>(3)) ? i.orientation : in.aim_orientation;
 		glm::vec3 controller_direction = -glm::column(glm::mat3_cast(q), 2); // The aim direction is -Z
 
 		// Compute all vectors in the reference frame of the GUI plane
@@ -240,10 +240,10 @@ std::vector<std::pair<ImVec2, float>> imgui_context::ray_plane_intersection(cons
 			// => ray_start.z + distance × ray_dir.z = 0
 			float distance = -ray_start.z / ray_dir.z;
 
-			if (distance < constants::gui::min_controller_distance and in.source == ImGuiMouseSource_VRController)
+			if (distance < constants::gui::min_controller_distance and in.source == static_cast<ImGuiMouseSource>(4))
 				continue;
 
-			if (distance < constants::gui::fingertip_distance_touching_thd_lo and in.source == ImGuiMouseSource_VRHandTracking)
+			if (distance < constants::gui::fingertip_distance_touching_thd_lo and in.source == static_cast<ImGuiMouseSource>(3))
 				continue;
 
 			coord.x = ray_start.x + distance * ray_dir.x;
@@ -595,7 +595,7 @@ std::vector<imgui_context::controller_state> imgui_context::read_controllers_sta
 					                index_tip.pose.position.z,
 					        },
 					        // aim_orientation is ignored by ray_plane_intersection() for hands
-					        .source = ImGuiMouseSource_VRHandTracking,
+					        .source = static_cast<ImGuiMouseSource>(3),
 					});
 				}
 
@@ -607,7 +607,7 @@ std::vector<imgui_context::controller_state> imgui_context::read_controllers_sta
 					                palm.pose.position.y,
 					                palm.pose.position.z,
 					        },
-					        .source = ImGuiMouseSource_VRHandTracking,
+					        .source = static_cast<ImGuiMouseSource>(3),
 					});
 				}
 
@@ -632,7 +632,7 @@ std::vector<imgui_context::controller_state> imgui_context::read_controllers_sta
 			controller_position = compute_pointer_position(controller_state{
 			        .aim_position = location->first + glm::mat3_cast(location->second * ctrl.offset.second) * ctrl.offset.first,
 			        .aim_orientation = location->second * ctrl.offset.second,
-			        .source = ImGuiMouseSource_VRController,
+			        .source = static_cast<ImGuiMouseSource>(4),
 			});
 
 			if (current_aim_interaction == 1)
@@ -668,9 +668,9 @@ std::vector<imgui_context::controller_state> imgui_context::read_controllers_sta
 		}
 
 		if (current_aim_interaction < 1)
-			state.source = ImGuiMouseSource_VRHandTracking;
+			state.source = static_cast<ImGuiMouseSource>(3);
 		else
-			state.source = ImGuiMouseSource_VRController;
+			state.source = static_cast<ImGuiMouseSource>(4);
 	}
 
 	return new_states;
@@ -747,11 +747,11 @@ size_t imgui_context::choose_focused_controller(const std::vector<controller_sta
 		const auto & old_state = controllers[index].second;
 		const auto & new_state = new_states[index];
 
-		bool old_click = (old_state.source == ImGuiMouseSource_VRController and old_state.trigger_clicked) or
-		                 (old_state.source == ImGuiMouseSource_VRHandTracking and old_state.fingertip_touching);
+		bool old_click = (old_state.source == static_cast<ImGuiMouseSource>(4) and old_state.trigger_clicked) or
+		                 (old_state.source == static_cast<ImGuiMouseSource>(3) and old_state.fingertip_touching);
 
-		bool new_click = (new_state.source == ImGuiMouseSource_VRController and new_state.trigger_clicked) or
-		                 (new_state.source == ImGuiMouseSource_VRHandTracking and new_state.fingertip_touching);
+		bool new_click = (new_state.source == static_cast<ImGuiMouseSource>(4) and new_state.trigger_clicked) or
+		                 (new_state.source == static_cast<ImGuiMouseSource>(3) and new_state.fingertip_touching);
 
 		if (not old_click and new_click)
 			return index;

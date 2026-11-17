@@ -488,7 +488,7 @@ void virtual_keyboard::display(imgui_context & ctx)
 	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, th.control_hovered);
 	ImGui::PushStyleColor(ImGuiCol_ButtonActive, th.control_active);
 	ImGui::PushStyleColor(ImGuiCol_Text, th.text);
-	ImGui::Begin("VirtualKeyboard", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoFocusOnClick);
+	ImGui::Begin("VirtualKeyboard", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoFocusOnAppearing | (ImGuiWindowFlags)(1 << 19));
 
 	ImVec2 size = ImGui::GetWindowSize();
 	ImVec2 padding = ImGui::GetStyle().WindowPadding;
