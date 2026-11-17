@@ -55,6 +55,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <magic_enum.hpp>
 #include <multi/comp_multi_interface.h>
 #include <stdexcept>
@@ -145,10 +146,24 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	if (use_steamvr_lh)
 	{
 		if (conf.lh_stick_deadzone > 0.01f)
-			setenv("LH_STICK_DEADZONE", std::format("{:.2}", *conf.lh_stick_deadzone).c_str(), true);
+		{
+			auto value = std::format("{:.2}", *conf.lh_stick_deadzone);
+#if defined(_WIN32)
+			_putenv_s("LH_STICK_DEADZONE", value.c_str());
+#else
+			setenv("LH_STICK_DEADZONE", value.c_str(), true);
+#endif
+		}
 
 		if (conf.lh_max_extrapolation.has_value())
-			setenv("LH_MAX_EXTRAPOLATION_MS", std::format("{}", *conf.lh_max_extrapolation).c_str(), true);
+		{
+			auto value = std::format("{}", *conf.lh_max_extrapolation);
+#if defined(_WIN32)
+			_putenv_s("LH_MAX_EXTRAPOLATION_MS", value.c_str());
+#else
+			setenv("LH_MAX_EXTRAPOLATION_MS", value.c_str(), true);
+#endif
+		}
 
 		U_LOG_W("=====================");
 		U_LOG_W("Disregard lighthousedb / chaperone related error messages from the lighthouse driver. These are irrelevant in case of WiVRn.");
