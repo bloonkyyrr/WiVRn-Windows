@@ -1,5 +1,8 @@
 name: Locales
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 jobs:
   locale-check:
     name: Locale check

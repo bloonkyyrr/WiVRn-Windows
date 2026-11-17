@@ -3,6 +3,7 @@ name: Build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 env:
   BUILD_TYPE: RelWithDebInfo
@@ -337,7 +338,7 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v3
       with:
-        tag_name: ${{ inputs.ref }}
+        tag_name: ${{ github.ref_name }}
         generate_release_notes: true
         draft: true
         files: |
