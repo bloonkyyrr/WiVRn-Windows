@@ -58,33 +58,65 @@ foreach(patch_file IN LISTS PATCHES)
 	set(apply_error "")
 
 	if(GIT_EXECUTABLE)
-		# --3way needs a repository; tarball sources only accept a plain apply.
-		set(git_args apply --whitespace=nowarn)
+		# Three ways to apply, tried in order. The plain one is exact. The second
+		# one covers sources checked out with CRLF line endings (git core.autocrlf
+		# on Windows): there a LF patch matches no context line at all, and only a
+		# git that knows about the conversion can apply it. The third one is a
+		# three-way merge, for patches whose context an earlier patch of the set
+		# rewrote; it needs a repository, tarball sources only accept a plain apply.
+		set(attempts 2)
 		if(is_repository)
-			list(APPEND git_args --3way)
+			math(EXPR attempts "${attempts} + 1")
 		endif()
 
-		execute_process(
-			COMMAND "${GIT_EXECUTABLE}" ${git_args} "${git_patch}"
-			WORKING_DIRECTORY "${source_dir}"
-			RESULT_VARIABLE result
-			OUTPUT_VARIABLE output
-			ERROR_VARIABLE error_output)
-
-		if(result EQUAL 0)
-			set(applied TRUE)
-		else()
-			set(apply_error "${error_output}")
-			execute_process(
-				COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${git_patch}"
-				WORKING_DIRECTORY "${source_dir}"
-				RESULT_VARIABLE reverse_result
-				OUTPUT_QUIET
-				ERROR_QUIET)
-			if(reverse_result EQUAL 0)
-				message(STATUS "apply.cmake: already applied: ${patch_name}")
-				set(applied TRUE)
+		set(attempt 0)
+		while(attempt LESS attempts AND NOT applied)
+			set(attempt_args apply --whitespace=nowarn)
+			if(attempt EQUAL 1)
+				list(PREPEND attempt_args -c core.autocrlf=true)
+			elseif(attempt EQUAL 2)
+				list(APPEND attempt_args --3way)
 			endif()
+
+			execute_process(
+				COMMAND "${GIT_EXECUTABLE}" ${attempt_args} "${git_patch}"
+				WORKING_DIRECTORY "${source_dir}"
+				RESULT_VARIABLE result
+				OUTPUT_VARIABLE output
+				ERROR_VARIABLE error_output)
+
+			if(result EQUAL 0)
+				set(applied TRUE)
+			else()
+				set(apply_error "${error_output}")
+			endif()
+
+			math(EXPR attempt "${attempt} + 1")
+		endwhile()
+
+		if(NOT applied)
+			# Already applied patches are recognised in reverse; the CRLF variant is
+			# needed for the same reason as above.
+			set(reverse_attempt 0)
+			while(reverse_attempt LESS 2 AND NOT applied)
+				set(reverse_args apply --reverse --check)
+				if(reverse_attempt EQUAL 1)
+					list(PREPEND reverse_args -c core.autocrlf=true)
+				endif()
+
+				execute_process(
+					COMMAND "${GIT_EXECUTABLE}" ${reverse_args} "${git_patch}"
+					WORKING_DIRECTORY "${source_dir}"
+					RESULT_VARIABLE reverse_result
+					OUTPUT_QUIET
+					ERROR_QUIET)
+				if(reverse_result EQUAL 0)
+					message(STATUS "apply.cmake: already applied: ${patch_name}")
+					set(applied TRUE)
+				endif()
+
+				math(EXPR reverse_attempt "${reverse_attempt} + 1")
+			endwhile()
 		endif()
 	endif()
 
@@ -110,7 +142,10 @@ foreach(patch_file IN LISTS PATCHES)
 		endif()
 	endif()
 
+	# A patch that silently does not apply produces compiler errors in code that
+	# looks unrelated to the patch, so stop here instead of building an unpatched
+	# tree.
 	if(NOT applied)
-		message(STATUS "apply.cmake: could not apply ${patch_name}: ${apply_error}")
+		message(FATAL_ERROR "apply.cmake: could not apply ${patch_name}: ${apply_error}")
 	endif()
 endforeach()

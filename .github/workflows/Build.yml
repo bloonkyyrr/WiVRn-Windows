@@ -91,9 +91,14 @@ jobs:
     - name: Configure
       shell: pwsh
       run: |
-        if (-not $env:VCPKG_ROOT) {
-          if (-not $env:VCPKG_INSTALLATION_ROOT) { throw 'Set VCPKG_ROOT to a vcpkg checkout' }
+        # The MSVC environment exports VCPKG_ROOT pointing at the vcpkg bundled
+        # with Visual Studio. That copy has no git metadata, so it rejects the
+        # manifest with "requires a manifest with a specified baseline". Prefer
+        # the runner's own vcpkg checkout, which is a full git clone.
+        if ($env:VCPKG_INSTALLATION_ROOT) {
           $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+        } elseif (-not $env:VCPKG_ROOT) {
+          throw 'Set VCPKG_ROOT to a vcpkg checkout'
         }
         $env:VCPKG_BINARY_SOURCES = "clear;files,$env:GITHUB_WORKSPACE/vcpkg-cache,readwrite"
         "VCPKG_ROOT=$env:VCPKG_ROOT" >> $env:GITHUB_ENV
@@ -189,8 +194,10 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update && sudo apt-get install glslang-tools spirv-tools librsvg2-bin gettext
-        wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.3.2/KTX-Software-4.3.2-Linux-x86_64.deb
-        sudo dpkg --install KTX-Software-4.3.2-Linux-x86_64.deb
+        # gltf-transform needs KTX-Software 4.4 or newer (it uses --assign-tf,
+        # which 4.3 lacks), and 4.4.2 is the version libktx is built from.
+        wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.2/KTX-Software-4.4.2-Linux-x86_64.deb
+        sudo dpkg --install KTX-Software-4.4.2-Linux-x86_64.deb
         npm install --global @gltf-transform/cli
 
     - name: Check for Secret availability

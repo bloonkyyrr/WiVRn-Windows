@@ -13,7 +13,10 @@ add_library(wivrn-common-base STATIC EXCLUDE_FROM_ALL
     utils/xdg_base_directory.cpp
     ${CMAKE_BINARY_DIR}/version.cpp
 )
-target_link_libraries(wivrn-common-base PUBLIC ws2_32)
+if(WIN32)
+    # Winsock. Not available (and not needed) on Android.
+    target_link_libraries(wivrn-common-base PUBLIC ws2_32)
+endif()
 add_dependencies(wivrn-common-base wivrn-version)
 
 add_library(wivrn-common STATIC EXCLUDE_FROM_ALL
