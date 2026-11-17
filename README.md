@@ -2,7 +2,7 @@
 
 <div align="center">
   
-[![License: GPL v3](images/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0) ![CI](https://github.com/WiVRn/WiVRn/workflows/Build/badge.svg) ![Format](https://github.com/WiVRn/WiVRn/workflows/Format/badge.svg)
+[![License: GPL v3](images/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0) [![CI](https://github.com/bloonkyyrr/WiVRn-Windows/workflows/Build/badge.svg)](https://github.com/bloonkyyrr/WiVRn-Windows/actions/workflows/Build.yml) [![Format](https://github.com/bloonkyyrr/WiVRn-Windows/workflows/Format/badge.svg)](https://github.com/bloonkyyrr/WiVRn-Windows/actions/workflows/Format.yml)
   
 </div>
 <p align="center"><img src="images/wivrn.svg" width="180"></p>
@@ -46,7 +46,8 @@ WiVRn supports a wide range of VR devices:
 
 ## PC Server
 
-WiVRn is built for Windows 10/11 x64. Download the installer from the release page, or
+WiVRn is built for Windows 10/11 x64. Download the installer from the
+[release page](https://github.com/bloonkyyrr/WiVRn-Windows/releases), or
 [build it yourself](docs/windows.md#building).
 
 The installer places `wivrn-server.exe`, the WiVRn OpenXR runtime and
@@ -139,8 +140,13 @@ cmake --build --preset windows
 
 From an "x64 Native Tools" prompt, Ninja works too: use the `windows-ninja` preset for both
 steps, which writes to `build-windows-ninja` instead of `build-windows`. With the Visual Studio
-generator the outputs sit in `build-windows\RelWithDebInfo`; `cpack --preset windows` turns
-them into the NSIS installer.
+generator the outputs sit in `build-windows\server\RelWithDebInfo`; `cpack --preset windows`
+turns them into the NSIS installer.
+
+The `windows` preset uses the Visual Studio 2022 generator. With a newer Visual Studio, pass
+its generator on the command line, for example
+`cmake --preset windows -G "Visual Studio 18 2026"`; the CI job picks the generator of the
+installed Visual Studio automatically.
 
 See [building on Windows](docs/windows.md#building) for the full requirements, the installed
 layout, and the OpenVR/OpenXR runtime registration.

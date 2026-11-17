@@ -21,6 +21,7 @@
 				"CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON",
 				"CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
 				"VCPKG_TARGET_TRIPLET": "x64-windows",
+				"X_VCPKG_APPLOCAL_DEPS_INSTALL": "ON",
 				"WIVRN_BUILD_CLIENT": "OFF",
 				"WIVRN_BUILD_SERVER": "ON",
 				"WIVRN_BUILD_SERVER_LIBRARY": "ON",
@@ -29,7 +30,7 @@
 				"WIVRN_USE_VULKAN_ENCODE": "ON",
 				"WIVRN_USE_X264": "ON",
 				"WIVRN_USE_SYSTEM_BOOST": "ON",
-				"WIVRN_FEATURE_SOLARXR": "ON",
+				"WIVRN_FEATURE_SOLARXR": "OFF",
 				"WIVRN_FEATURE_STEAMVR_LIGHTHOUSE": "OFF",
 				"WIVRN_WERROR": "OFF"
 			}
@@ -67,7 +68,8 @@
 			"name": "windows",
 			"displayName": "Build NSIS installer",
 			"configurePreset": "windows",
-			"generators": [ "NSIS" ]
+			"generators": [ "NSIS" ],
+			"configurations": [ "RelWithDebInfo" ]
 		}
 	]
 }

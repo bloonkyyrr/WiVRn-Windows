@@ -53,6 +53,25 @@ option(WIVRN_OPTIMIZE_SHADERS "Run spirv-opt on compiled shaders" ON)
 option(WIVRN_DEBUG_SHADERS "Compile shaders with debug information" OFF)
 option(WIVRN_ADDRESS_SANITIZER "Use address sanitizer" OFF)
 
+if(WIN32)
+	# windows.h defines min and max as macros, which breaks every std::min/std::max
+	# in shared code (and anything else taking a braced initializer list).
+	add_compile_definitions(NOMINMAX)
+endif()
+
+if(MSVC)
+	# Without this MSVC reports __cplusplus as 199711L, so code guarded by
+	# `__cplusplus >= 201703L` (Monado's u_file.cpp among others) silently takes its
+	# pre-C++17 path and includes headers that no longer ship.
+	add_compile_options(/Zc:__cplusplus)
+	# The traditional MSVC preprocessor does not implement __VA_OPT__, which
+	# common/vk/check.h uses.
+	add_compile_options(/Zc:preprocessor)
+	# Sources are UTF-8 without a BOM; without this MSVC reads them as the ANSI
+	# codepage and rejects non-ASCII characters (quotes and symbols in comments).
+	add_compile_options(/utf-8)
+endif()
+
 option(WIVRN_USE_NVENC "Enable nvenc (Nvidia) hardware encoder" ON)
 option(WIVRN_USE_VULKAN_ENCODE "Enable vulkan video encoder" ON)
 option(WIVRN_USE_X264 "Enable x264 software encoder" ON)
@@ -76,6 +95,14 @@ set(OVR_COMPAT_SEARCH_PATH "C:/Program Files/OpenComposite;C:/Program Files/xriz
 option(WIVRN_FEATURE_DEBUG_GUI "Enable Monado debug GUI" OFF)
 option(WIVRN_FEATURE_RENDERDOC "Support renderdoc" OFF)
 option(WIVRN_FEATURE_SOLARXR "Enable SolarXR driver" ON)
+
+# Monado's SolarXR driver depends on XRT_HAVE_LINUX: its only transport is a unix
+# domain socket. It is unavailable in a Windows build, so the option is forced off
+# and the server falls back to its own tracker feed.
+if(WIN32 AND WIVRN_FEATURE_SOLARXR)
+	message(STATUS "SolarXR driver requires Linux; building with WIVRN_FEATURE_SOLARXR=OFF")
+	set(WIVRN_FEATURE_SOLARXR OFF)
+endif()
 option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" OFF)
 
 set(WIVRN_CSS "${CMAKE_SOURCE_DIR}/images/wivrn-local.css" CACHE STRING "Stylesheet to use to render SVGs" )

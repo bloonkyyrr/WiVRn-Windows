@@ -116,8 +116,10 @@ std::variant<wivrn::vdf::string, std::vector<wivrn::vdf::keyvalue>> read_value(c
 
 bool wivrn::vdf::string::operator==(const char * b) const
 {
-	const char * a = data.begin();
-	for (; a != data.end(); ++a, ++b)
+	// MSVC's string_view iterators are not plain pointers.
+	const char * a = data.data();
+	const char * a_end = data.data() + data.size();
+	for (; a != a_end; ++a, ++b)
 	{
 		if (*b == '\0')
 			return false;

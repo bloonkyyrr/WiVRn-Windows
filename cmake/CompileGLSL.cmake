@@ -1,6 +1,21 @@
 set(_THIS_MODULE_BASE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
-find_program(HEXDUMP hexdump REQUIRED)
+# Compiled shaders are turned into C++ arrays by a CMake script, so the build does
+# not need a hexdump binary (it does not exist on Windows).
+set(WIVRN_SPV_TO_CXX "${_THIS_MODULE_BASE_DIR}/SpvToCxx.cmake")
+
+# glslangValidator and spirv-opt normally come from the LunarG Vulkan SDK, but the
+# validator is also usable standalone and on the PATH.
+find_program(WIVRN_GLSLANGVALIDATOR NAMES glslangValidator glslangValidator.exe)
+find_program(WIVRN_SPIRV_OPT NAMES spirv-opt spirv-opt.exe)
+
+if(NOT WIVRN_GLSLANGVALIDATOR)
+    message(FATAL_ERROR "glslangValidator not found: install the Vulkan SDK or add it to PATH")
+endif()
+
+if(WIVRN_OPTIMIZE_SHADERS AND NOT WIVRN_SPIRV_OPT)
+    message(STATUS "spirv-opt not found: shaders will be embedded unoptimised")
+endif()
 
 function(compile_glsl_aux shader_stage shader_name glsl_filename output target_env)
 
@@ -21,16 +36,16 @@ function(compile_glsl_aux shader_stage shader_name glsl_filename output target_e
 
     add_custom_command(
         OUTPUT "${SPV_FILE}-nopt"
-        COMMAND Vulkan::glslangValidator -V --target-env ${target_env} -S ${shader_stage} -D${shader_stage_upper}_SHADER ${glsl_filename} ${SHADER_FLAGS} -o "${SPV_FILE}-nopt" --depfile "${SPV_FILE}.d"
+        COMMAND "${WIVRN_GLSLANGVALIDATOR}" -V --target-env ${target_env} -S ${shader_stage} -D${shader_stage_upper}_SHADER ${glsl_filename} ${SHADER_FLAGS} -o "${SPV_FILE}-nopt" --depfile "${SPV_FILE}.d"
         DEPENDS "${glsl_filename}"
         DEPFILE "${SPV_FILE}.d"
         VERBATIM
     )
 
-    if (WIVRN_OPTIMIZE_SHADERS)
+    if (WIVRN_OPTIMIZE_SHADERS AND WIVRN_SPIRV_OPT)
         add_custom_command(
             OUTPUT "${SPV_FILE}-opt"
-            COMMAND spirv-opt --target-env=${target_env} -O "${SPV_FILE}-nopt" -o "${SPV_FILE}-opt"
+            COMMAND "${WIVRN_SPIRV_OPT}" --target-env=${target_env} -O "${SPV_FILE}-nopt" -o "${SPV_FILE}-opt"
             DEPENDS "${SPV_FILE}-nopt"
             VERBATIM
         )
@@ -38,10 +53,9 @@ function(compile_glsl_aux shader_stage shader_name glsl_filename output target_e
     else()
         set(_spv "${SPV_FILE}-nopt")
     endif()
-    set(_format "/4 \"0x%02X, \"")
     add_custom_command(
         OUTPUT "${SPV_FILE}"
-        COMMAND "${HEXDUMP}" -ve "${_format}" ${_spv} > "${SPV_FILE}"
+        COMMAND "${CMAKE_COMMAND}" "-DSPV_IN=${_spv}" "-DSPV_OUT=${SPV_FILE}" -P "${WIVRN_SPV_TO_CXX}"
         DEPENDS "${_spv}"
         VERBATIM
     )

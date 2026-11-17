@@ -68,13 +68,19 @@ set(XRT_HAVE_DBUS                    OFF)
 set(XRT_HAVE_LIBUDEV                 OFF)
 set(XRT_HAVE_ONNXRUNTIME             OFF)
 
+# Monado's WinRT helpers need the C++/WinRT projection headers, which are not part of
+# this build's dependencies.
+set(XRT_HAVE_WINRT                   OFF)
+
 set(XRT_HAVE_SYSTEMD                 OFF)
 set(XRT_INSTALL_SYSTEMD_UNIT_FILES   OFF)
 
 set(BUILD_DOC                        OFF)
 set(BUILD_TESTING                    OFF)
 
-set(XRT_HAVE_SYSTEM_CJSON            OFF)
+# Use the vcpkg cJSON: Monado's vendored copy clashes with it (dllimport definitions
+# and a header/source version mismatch) when both are on the include path.
+set(XRT_HAVE_SYSTEM_CJSON            ON)
 
 # Drive Monado's tracing from the same switch as WiVRn's.
 if(WIVRN_TRACE_MONADO)
@@ -242,21 +248,36 @@ endif()
 
 if (WIVRN_BUILD_SERVER_LIBRARY)
 	set_target_properties(${RUNTIME_TARGET} PROPERTIES EXCLUDE_FROM_ALL FALSE)
-	set_target_properties(monado PROPERTIES EXCLUDE_FROM_ALL FALSE)
 
-	set_target_properties(monado PROPERTIES OUTPUT_NAME "monado_wivrn")
-	# Workaround: the manifest generator refers to the target by name.
-	add_library(monado_wivrn ALIAS monado)
+	# Monado builds libmonado only on Linux (it is gated on XRT_HAVE_LINUX), so the
+	# management library and its manifest entry only exist in a Linux build.
+	set(_manifest_monado_field "")
+	if(TARGET monado)
+		set_target_properties(monado PROPERTIES EXCLUDE_FROM_ALL FALSE)
+		set_target_properties(monado PROPERTIES OUTPUT_NAME "monado_wivrn")
+		# Workaround: the manifest generator refers to the target by name.
+		add_library(monado_wivrn ALIAS monado)
+		set(_manifest_monado_field ", \"MND_libmonado_path\": \"./$<TARGET_FILE_NAME:monado>\"")
+	endif()
 
 	# The OpenXR loader looks the runtime up through the manifest, which must sit
 	# next to the libraries it names.
 	file(READ "${CMAKE_CURRENT_SOURCE_DIR}/dist/openxr_wivrn.json.in" _manifest_template)
 	string(REPLACE "@library@" "./$<TARGET_FILE_NAME:${RUNTIME_TARGET}>" _manifest "${_manifest_template}")
-	string(REPLACE "@monado@" "./$<TARGET_FILE_NAME:monado>" _manifest "${_manifest}")
+	string(REPLACE "@monado_field@" "${_manifest_monado_field}" _manifest "${_manifest}")
 	file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/openxr_wivrn.json" CONTENT "${_manifest}")
 
-	install(TARGETS ${RUNTIME_TARGET} monado
+	# The OpenXR runtime is a MODULE library on Windows, which installs through
+	# LIBRARY rather than RUNTIME.
+	install(TARGETS ${RUNTIME_TARGET}
 		RUNTIME DESTINATION bin
+		LIBRARY DESTINATION bin
 		COMPONENT Runtime)
+	if(TARGET monado)
+		install(TARGETS monado
+			RUNTIME DESTINATION bin
+			LIBRARY DESTINATION bin
+			COMPONENT Runtime)
+	endif()
 	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/openxr_wivrn.json" DESTINATION bin)
 endif()

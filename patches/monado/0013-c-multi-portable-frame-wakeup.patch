@@ -1,0 +1,25 @@
+diff --git a/src/xrt/compositor/multi/comp_multi_system.c b/src/xrt/compositor/multi/comp_multi_system.c
+index 717f6ae4c..23bfe5e2a 100644
+--- a/src/xrt/compositor/multi/comp_multi_system.c
++++ b/src/xrt/compositor/multi/comp_multi_system.c
+@@ -441,11 +441,20 @@ wait_frame(struct multi_system_compositor *msc, struct xrt_compositor *xc, int64
+ 
+ 	// When we should wake up is in the past:ish.
+ 	if (! fuzzy_in_the_past) {
++#if defined(XRT_OS_WINDOWS)
++		// pthreads4w provides neither CLOCK_MONOTONIC nor pthread_cond_clockwait, so
++		// sleep the remainder out with the portable precise sleeper instead.
++		struct os_precise_sleeper sleeper = {0};
++		os_precise_sleeper_init(&sleeper);
++		u_wait_until(&sleeper, (uint64_t)wake_up_time_ns);
++		os_precise_sleeper_deinit(&sleeper);
++#else
+ 		struct timespec wake_ts;
+ 		os_ns_to_timespec(wake_up_time_ns, &wake_ts);
+ 		os_mutex_lock(&msc->wake_mutex);
+ 		pthread_cond_clockwait(&msc->wake_cond.cond, &msc->wake_mutex.mutex, CLOCK_MONOTONIC, &wake_ts);
+ 		os_mutex_unlock(&msc->wake_mutex);
++#endif
+ 	}
+ }
+ 

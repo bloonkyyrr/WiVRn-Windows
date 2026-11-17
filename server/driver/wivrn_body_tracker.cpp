@@ -38,6 +38,17 @@ static_assert(std::to_underlying(XR_BODY_JOINT_COUNT_FB) == std::to_underlying(X
 static_assert(std::to_underlying(XR_FULL_BODY_JOINT_COUNT_META) == std::to_underlying(XRT_FULL_BODY_JOINT_COUNT_META));
 static_assert(XR_BODY_JOINT_COUNT_BD == XRT_BODY_JOINT_COUNT_BD);
 
+// Reaching a switch default marked unreachable is a programming error, tell the
+// optimizer so it does not warn about missing returns.
+[[noreturn]] static inline void unreachable()
+{
+#if defined(_MSC_VER)
+	__assume(false);
+#else
+	__builtin_unreachable();
+#endif
+}
+
 static xrt_space_relation to_relation(const wivrn::from_headset::meta_body::pose & pose)
 {
 	return {
@@ -84,7 +95,7 @@ static inline bool is_joint_set_active(wivrn::from_headset::body_type body_type,
 			return set.body_joint_set_bd.is_active;
 		default:
 			assert(false);
-			__builtin_unreachable();
+			unreachable();
 	}
 }
 
@@ -131,7 +142,7 @@ xrt_body_joint_set body_joints_list::interpolate(const xrt_body_joint_set & a, c
 			break;
 		default:
 			assert(false);
-			__builtin_unreachable();
+			unreachable();
 	}
 	return result;
 }
@@ -163,7 +174,7 @@ xrt_body_joint_set body_joints_list::extrapolate(const xrt_body_joint_set & a, c
 			break;
 		default:
 			assert(false);
-			__builtin_unreachable();
+			unreachable();
 	}
 	return result;
 }
@@ -332,7 +343,7 @@ wivrn_body_tracker::wivrn_body_tracker(xrt_device * hmd, wivrn::wivrn_session & 
 			break;
 		default:
 			assert(false);
-			__builtin_unreachable();
+			unreachable();
 	}
 
 	inputs = inputs_array.data();

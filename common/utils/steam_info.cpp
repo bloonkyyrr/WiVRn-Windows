@@ -228,7 +228,8 @@ std::optional<uint32_t> guess_steam_userid(const std::filesystem::path & root)
 		for (const auto & [userid, entries]: std::get<std::vector<wivrn::vdf::keyvalue>>(loginusers.value))
 		{
 			uint64_t v;
-			if (std::from_chars(userid.data.begin(), userid.data.end(), v).ec != std::errc{})
+			// MSVC's string_view iterators are not plain pointers, which from_chars needs.
+			if (std::from_chars(userid.data.data(), userid.data.data() + userid.data.size(), v).ec != std::errc{})
 				continue;
 			res = v; // truncate to 32 bits
 			for (const auto & [key, value]: std::get<std::vector<wivrn::vdf::keyvalue>>(entries))

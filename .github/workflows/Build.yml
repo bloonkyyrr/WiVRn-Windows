@@ -9,23 +9,50 @@ env:
 
 jobs:
   build-windows:
-    name: Windows
+    name: Windows (${{ matrix.flavour }})
     runs-on: windows-latest
     if: ${{ vars.APK_ONLY == '' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: windows
+            flavour: vs
+            dir: build-windows
+          - preset: windows-ninja
+            flavour: ninja
+            dir: build-windows-ninja
 
     steps:
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
 
-    - uses: actions/cache@v5
-      with:
-        key: cmake-windows-${{ hashFiles('CMakeLists.txt', 'vcpkg.json', 'monado-rev', 'patches/**') }}
-        path: |
-          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.tar.*
-          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.zip
-          ${{github.workspace}}/cmake-fetch/*-src/.git
-        restore-keys: cmake-windows-
+    # The `windows` preset targets the Visual Studio 2022 generator. Pick the generator
+    # of the Visual Studio installation that is actually installed so the job keeps
+    # working on newer runners (VS 2026) as well.
+    - name: Select Visual Studio generator
+      id: vs
+      shell: pwsh
+      run: |
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        if (-not (Test-Path $vswhere)) { throw 'vswhere.exe not found' }
+        $version = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion) | Select-Object -First 1
+        if (-not $version) { throw 'No Visual Studio installation with the C++ toolset found' }
+        $major = [int]($version.Split('.')[0])
+        $generator = switch ($major) {
+          17 { 'Visual Studio 17 2022' }
+          18 { 'Visual Studio 18 2026' }
+          default { throw "Unsupported Visual Studio version $version" }
+        }
+        Write-Host "Visual Studio $version -> $generator"
+        "generator=$generator" >> $env:GITHUB_OUTPUT
+
+    # The Ninja preset needs the MSVC environment; the Visual Studio preset does not.
+    - name: Set up MSVC environment
+      if: matrix.flavour == 'ninja'
+      uses: ilammy/msvc-dev-cmd@v1
 
     - name: Install Vulkan SDK
       uses: humbletim/install-vulkan-sdk@v1.2
@@ -33,25 +60,81 @@ jobs:
         version: 1.4.304.0
         cache: true
 
+    # Monado and WiVRn compile GLSL at build time and need glslangValidator, which
+    # ships with the Vulkan SDK.
+    - name: Add Vulkan SDK tools to PATH
+      shell: pwsh
+      run: |
+        $bin = Join-Path $env:VULKAN_SDK 'Bin'
+        if (-not (Test-Path (Join-Path $bin 'glslangValidator.exe'))) {
+          throw "glslangValidator.exe not found in $bin"
+        }
+        $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+    - uses: actions/cache@v5
+      with:
+        key: windows-deps-${{ matrix.flavour }}-${{ hashFiles('CMakeLists.txt', 'vcpkg.json', 'monado-rev', 'patches/**') }}
+        # Only the downloaded archives are cached: the source trees carry applied
+        # patches, so restoring them would re-run the patch step on a patched tree.
+        path: |
+          ${{github.workspace}}/${{ matrix.dir }}/_deps/*-subbuild/*-populate-prefix/src/*.tar.*
+          ${{github.workspace}}/${{ matrix.dir }}/_deps/*-subbuild/*-populate-prefix/src/*.zip
+        restore-keys: windows-deps-${{ matrix.flavour }}-
+
+    - uses: actions/cache@v5
+      with:
+        key: vcpkg-binary-${{ hashFiles('vcpkg.json') }}
+        path: ${{github.workspace}}/vcpkg-cache
+        restore-keys: vcpkg-binary-
+
     - name: Configure
-      env:
-        VCPKG_ROOT: ${{ env.VCPKG_INSTALLATION_ROOT }}
-      run: cmake --preset windows
+      shell: pwsh
+      run: |
+        if (-not $env:VCPKG_ROOT) {
+          if (-not $env:VCPKG_INSTALLATION_ROOT) { throw 'Set VCPKG_ROOT to a vcpkg checkout' }
+          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+        }
+        $env:VCPKG_BINARY_SOURCES = "clear;files,$env:GITHUB_WORKSPACE/vcpkg-cache,readwrite"
+        "VCPKG_ROOT=$env:VCPKG_ROOT" >> $env:GITHUB_ENV
+        "VCPKG_BINARY_SOURCES=$env:VCPKG_BINARY_SOURCES" >> $env:GITHUB_ENV
+
+        $preset = '${{ matrix.preset }}'
+        if ($preset -eq 'windows') {
+          cmake --preset $preset -G '${{ steps.vs.outputs.generator }}'
+        } else {
+          cmake --preset $preset
+        }
+        exit $LASTEXITCODE
 
     - name: Build
-      run: cmake --build --preset windows
+      run: cmake --build --preset ${{ matrix.preset }}
 
-    - name: Package
-      run: cpack --config build-windows/CPackConfig.cmake -C ${{ env.BUILD_TYPE }}
+    - name: Stage install
+      run: cmake --install ${{ matrix.dir }} --config ${{ env.BUILD_TYPE }} --prefix stage-${{ matrix.flavour }}
 
     - name: Upload server
       uses: actions/upload-artifact@v7
       with:
-        name: wivrn-server-windows
-        path: build-windows/bin/*
+        name: wivrn-server-windows-${{ matrix.flavour }}
+        path: stage-${{ matrix.flavour }}/*
         retention-days: 30
 
+    - name: Ensure NSIS
+      if: matrix.flavour == 'vs'
+      shell: pwsh
+      run: |
+        $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+        if (-not (Test-Path $makensis)) {
+          choco install nsis --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to install NSIS' }
+        }
+
+    - name: Package
+      if: matrix.flavour == 'vs'
+      run: cpack --preset windows
+
     - name: Upload installer
+      if: matrix.flavour == 'vs'
       uses: actions/upload-artifact@v7
       with:
         name: wivrn-installer-windows
@@ -62,10 +145,10 @@ jobs:
       uses: actions/upload-artifact@v7
       if: failure()
       with:
-        name: windows-build-dir
+        name: windows-build-dir-${{ matrix.flavour }}
         path: |
-          build-windows/CMakeFiles/CMakeConfigureLog.yaml
-          build-windows/CMakeCache.txt
+          ${{ matrix.dir }}/CMakeFiles/CMakeConfigureLog.yaml
+          ${{ matrix.dir }}/CMakeCache.txt
         retention-days: 3
 
   build-android:

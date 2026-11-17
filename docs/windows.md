@@ -6,8 +6,11 @@ The PC server targets Windows 10/11 x64 with MSVC. The headset client targets An
 
 - Windows 10 or 11, x64
 - CMake 3.28 or newer
-- Visual Studio 2022 with the C++23 toolset
+- Visual Studio 2022 or newer (2026 tested) with the C++23 toolset
 - Vulkan SDK 1.4.304 or newer (`VULKAN_SDK` set)
+- glslang 16.x or newer, with `glslangValidator.exe` on `PATH`: the server and Monado
+  compile GLSL shaders at build time (the vcpkg `glslang` port ships libraries only).
+  `spirv-opt` is used when found and skipped otherwise.
 - [vcpkg](https://vcpkg.io/), with `VCPKG_ROOT` pointing at the checkout
 - Git (the Monado patches and the FetchContent sources are fetched with it)
 
@@ -21,16 +24,25 @@ cmake --preset windows
 cmake --build --preset windows
 ```
 
-Or, from a "x64 Native Tools" prompt, with Ninja:
+The `windows` preset uses the Visual Studio 2022 generator. If the installed Visual Studio is
+newer, override the generator on the command line — CMake accepts `-G` on top of a preset:
+
+```powershell
+cmake --preset windows -G "Visual Studio 18 2026"
+cmake --build --preset windows
+```
+
+Or, from a "x64 Native Tools" prompt, with Ninja (independent of the Visual Studio version):
 
 ```powershell
 cmake --preset windows-ninja
 cmake --build --preset windows-ninja
 ```
 
-Outputs land in `build-windows\RelWithDebInfo` (the Ninja preset writes to
-`build-windows-ninja`): `wivrn-server.exe`, the OpenXR runtime (`openxr_wivrn.dll` and
-`monado_wivrn.dll`) and `openxr_wivrn.json`.
+Outputs land in `build-windows\server\RelWithDebInfo` (the Ninja preset writes to
+`build-windows-ninja`): `wivrn-server.exe`, the OpenXR runtime `openxr_wivrn.dll` and
+`openxr_wivrn.json` (which points the OpenXR loader at that DLL; Monado's
+`libmonado` management library is Linux-only, so no `monado_wivrn.dll` is built here).
 
 ### Installer
 
