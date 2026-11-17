@@ -8,10 +8,14 @@ endif()
 configure_file(wivrn_config.h.in wivrn_config.h)
 
 add_library(wivrn-common-base STATIC EXCLUDE_FROM_ALL
+    platform.cpp
     utils/strings.cpp
     utils/xdg_base_directory.cpp
     ${CMAKE_BINARY_DIR}/version.cpp
 )
+if(WIN32)
+    target_link_libraries(wivrn-common-base PUBLIC ws2_32)
+endif()
 add_dependencies(wivrn-common-base wivrn-version)
 
 add_library(wivrn-common STATIC EXCLUDE_FROM_ALL
@@ -37,8 +41,11 @@ if (WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_SERVER)
         utils/xdg_icon_lookup.cpp
     )
     target_link_libraries(wivrn-common-server
-        PRIVATE nlohmann_json::nlohmann_json PNG::PNG PkgConfig::librsvg-2.0 LibArchive::LibArchive Boost::iostreams
+        PRIVATE nlohmann_json::nlohmann_json PNG::PNG LibArchive::LibArchive Boost::iostreams
         PUBLIC wivrn-common-base)
+    if (WIVRN_USE_LIBRSVG)
+        target_link_libraries(wivrn-common-server PRIVATE PkgConfig::librsvg-2.0)
+    endif()
 
     if (WIVRN_BUILD_TEST)
         add_executable(list-apps

@@ -25,6 +25,7 @@
 #include <openssl/kdf.h>
 #include <openssl/params.h>
 #include <openssl/pem.h>
+#include <array>
 #include <stdexcept>
 #include <string>
 
@@ -507,7 +508,7 @@ void decrypt_context::decrypt_in_place(std::span<std::span<uint8_t>> text)
 
 std::vector<uint8_t> pbkdf2(std::string pass, std::string salt, std::span<uint8_t> secret, size_t size)
 {
-	std::array params{
+	std::array<OSSL_PARAM, 4> params{
 	        OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, salt.data(), salt.size()),
 	        OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_PASSWORD, pass.data(), pass.size()),
 	        OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SECRET, secret.data(), secret.size()),

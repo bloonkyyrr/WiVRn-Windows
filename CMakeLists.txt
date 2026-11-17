@@ -14,6 +14,39 @@ if(ANDROID)
     list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/android)
 endif()
 
+# Platform defaults. On Windows the Linux-only subsystems stay disabled until
+# their native implementations land, so the server can be configured and built
+# incrementally. See docs/windows.md.
+if(WIN32)
+    set(WIVRN_DEFAULT_VAAPI        OFF)
+    set(WIVRN_DEFAULT_PIPEWIRE     OFF)
+    set(WIVRN_DEFAULT_SYSTEMD      OFF)
+    set(WIVRN_DEFAULT_LIGHTHOUSE   OFF)
+    set(WIVRN_DEFAULT_AVAHI        OFF)
+    set(WIVRN_DEFAULT_GLIB         OFF)
+    set(WIVRN_DEFAULT_LIBNOTIFY    OFF)
+    set(WIVRN_DEFAULT_LIBRSVG      OFF)
+    set(WIVRN_DEFAULT_COLOUR       OFF)
+    set(WIVRN_DEFAULT_WIVRNCTL     OFF)
+    if(NOT DEFINED WIVRN_BUILD_CLIENT)
+        set(WIVRN_BUILD_CLIENT OFF)
+    endif()
+    if(NOT DEFINED WIVRN_BUILD_DASHBOARD)
+        set(WIVRN_BUILD_DASHBOARD OFF)
+    endif()
+else()
+    set(WIVRN_DEFAULT_VAAPI        ON)
+    set(WIVRN_DEFAULT_PIPEWIRE     ON)
+    set(WIVRN_DEFAULT_SYSTEMD      ON)
+    set(WIVRN_DEFAULT_LIGHTHOUSE   ON)
+    set(WIVRN_DEFAULT_AVAHI        ON)
+    set(WIVRN_DEFAULT_GLIB         ON)
+    set(WIVRN_DEFAULT_LIBNOTIFY    ON)
+    set(WIVRN_DEFAULT_LIBRSVG      ON)
+    set(WIVRN_DEFAULT_COLOUR       ON)
+    set(WIVRN_DEFAULT_WIVRNCTL     ON)
+endif()
+
 # Default to PIC code
 include(CheckPIESupported)
 check_pie_supported()
@@ -42,7 +75,7 @@ option(WIVRN_BUILD_CLIENT "Build WiVRn client" OFF)
 option(WIVRN_BUILD_SERVER "Build WiVRn server" ON)
 option(WIVRN_BUILD_SERVER_LIBRARY "Build OpenXR library for WiVRn server" ${WIVRN_BUILD_SERVER})
 option(WIVRN_BUILD_DASHBOARD "Build WiVRn dashboard" OFF)
-option(WIVRN_BUILD_WIVRNCTL "Build wivrnctl" ON)
+option(WIVRN_BUILD_WIVRNCTL "Build wivrnctl" ${WIVRN_DEFAULT_WIVRNCTL})
 option(WIVRN_BUILD_DISSECTOR "Build Wireshark dissector" OFF)
 option(WIVRN_BUILD_TEST "Build test binaries" OFF)
 option(WIVRN_WERROR "Treat warnings as errors" OFF)
@@ -52,10 +85,14 @@ option(WIVRN_ADDRESS_SANITIZER "Use address sanitizer" OFF)
 
 # V4L2 decoder on by default on Linux AArch64
 set(_WIVRN_USE_V4L2_DEFAULT OFF)
-if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" AND NOT ANDROID)
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" AND NOT ANDROID AND NOT WIN32)
     set(_WIVRN_USE_V4L2_DEFAULT ON)
 endif()
 option(WIVRN_USE_V4L2 "Enable V4L2 hardware video decoder" ${_WIVRN_USE_V4L2_DEFAULT})
+option(WIVRN_USE_AVAHI "Enable Avahi mDNS service publication" ${WIVRN_DEFAULT_AVAHI})
+option(WIVRN_USE_GLIB "Enable GLib/DBus integration" ${WIVRN_DEFAULT_GLIB})
+option(WIVRN_USE_LIBNOTIFY "Enable desktop notifications" ${WIVRN_DEFAULT_LIBNOTIFY})
+option(WIVRN_USE_LIBRSVG "Enable librsvg icon rendering" ${WIVRN_DEFAULT_LIBRSVG})
 unset(_WIVRN_USE_V4L2_DEFAULT)
 
 if(WIVRN_OPTIMIZE_SHADERS AND WIVRN_DEBUG_SHADERS)
@@ -63,7 +100,7 @@ if(WIVRN_OPTIMIZE_SHADERS AND WIVRN_DEBUG_SHADERS)
 endif()
 
 option(WIVRN_USE_NVENC "Enable nvenc (Nvidia) hardware encoder" ON)
-option(WIVRN_USE_VAAPI "Enable vaapi (AMD/Intel) hardware encoder" ON)
+option(WIVRN_USE_VAAPI "Enable vaapi (AMD/Intel) hardware encoder" ${WIVRN_DEFAULT_VAAPI})
 option(WIVRN_USE_VULKAN_ENCODE "Enable vulkan video encoder" ON)
 option(WIVRN_USE_X264 "Enable x264 software encoder" ON)
 
@@ -73,7 +110,8 @@ if(WIVRN_TRACE_MONADO AND NOT WIVRN_USE_PERFETTO)
 	message(FATAL_ERROR "WIVRN_TRACE_MONADO=ON requires WIVRN_USE_PERFETTO=ON")
 endif()
 
-option(WIVRN_USE_PIPEWIRE "Enable pipewire backend" ON)
+option(WIVRN_USE_PIPEWIRE "Enable pipewire backend" ${WIVRN_DEFAULT_PIPEWIRE})
+option(WIVRN_USE_SYSTEMD "Enable systemd integration" ${WIVRN_DEFAULT_SYSTEMD})
 
 set(OVR_COMPAT_SEARCH_PATH "/opt/xrizer:/usr/local/lib/OpenComposite:/usr/lib/OpenComposite:/opt/OpenComposite:/opt/opencomposite:/opt/VapoR:/usr/local/lib/VapoR"
     CACHE STRING "List of places to search for the OpenVR compatibility layer, separated by :")
@@ -81,7 +119,7 @@ set(OVR_COMPAT_SEARCH_PATH "/opt/xrizer:/usr/local/lib/OpenComposite:/usr/lib/Op
 option(WIVRN_FEATURE_DEBUG_GUI "Enable Monado debug GUI" OFF)
 option(WIVRN_FEATURE_RENDERDOC "Support renderdoc" OFF)
 option(WIVRN_FEATURE_SOLARXR "Enable SolarXR driver" ON)
-option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" ON)
+option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" ${WIVRN_DEFAULT_LIGHTHOUSE})
 
 set(WIVRN_CSS "${CMAKE_SOURCE_DIR}/images/wivrn-local.css" CACHE STRING "Stylesheet to use to render SVGs" )
 
@@ -95,7 +133,7 @@ if (NOT WIVRN_OPENXR_MANIFEST_TYPE IN_LIST WIVRN_OPENXR_MANIFEST_TYPE_VALUES)
 endif()
 option(WIVRN_OPENXR_MANIFEST_ABI "Generate an ABI specific OpenXR manifest")
 
-option(ENABLE_COLOURED_OUTPUT "Always produce ANSI-coloured output (GNU/Clang only)." ON)
+option(ENABLE_COLOURED_OUTPUT "Always produce ANSI-coloured output (GNU/Clang only)." ${WIVRN_DEFAULT_COLOUR})
 
 set(WIVRN_ENVIRONMENTS_URL "https://github.com/WiVRn/WiVRn-environments/releases/latest/download/index.json" CACHE STRING "URL hosting the custom environments json file")
 
@@ -113,7 +151,9 @@ if(ENABLE_COLOURED_OUTPUT)
 	endif()
 endif()
 
-find_package(PkgConfig REQUIRED)
+if(NOT WIN32)
+    find_package(PkgConfig REQUIRED)
+endif()
 find_package(Vulkan REQUIRED)
 find_package(Git)
 if (NEED_COMMON)
@@ -130,7 +170,9 @@ if (WIVRN_USE_SYSTEM_BOOST AND NEED_COMMON)
 endif()
 
 if (WIVRN_BUILD_SERVER)
-    find_program(GDBUS_CODEGEN gdbus-codegen REQUIRED)
+    if(WIVRN_USE_GLIB)
+        find_program(GDBUS_CODEGEN gdbus-codegen REQUIRED)
+    endif()
     if (Vulkan_VERSION  VERSION_LESS "1.4.304")
         message(FATAL_ERROR "Vulkan version must be at least 1.4.304, found ${Vulkan_VERSION}")
     endif()
@@ -145,21 +187,33 @@ if (WIVRN_BUILD_SERVER)
     endif()
 
     if (WIVRN_USE_X264)
-        pkg_check_modules(X264 REQUIRED IMPORTED_TARGET x264)
+        if(WIN32)
+            find_package(x264 REQUIRED)
+        else()
+            pkg_check_modules(X264 REQUIRED IMPORTED_TARGET x264)
+        endif()
     endif()
 
-    pkg_check_modules(AVAHI REQUIRED IMPORTED_TARGET avahi-client avahi-glib)
+    if (WIVRN_USE_AVAHI)
+        pkg_check_modules(AVAHI REQUIRED IMPORTED_TARGET avahi-client avahi-glib)
+    endif()
     find_package(Eigen3 REQUIRED)
     find_package(nlohmann_json REQUIRED)
     find_package(CLI11 REQUIRED)
 
-    pkg_check_modules(glib2 REQUIRED IMPORTED_TARGET glib-2.0 gio-2.0 gio-unix-2.0)
+    if (WIVRN_USE_GLIB)
+        pkg_check_modules(glib2 REQUIRED IMPORTED_TARGET glib-2.0 gio-2.0 gio-unix-2.0)
+    endif()
 
-    pkg_check_modules(libnotify REQUIRED IMPORTED_TARGET libnotify)
+    if (WIVRN_USE_LIBNOTIFY)
+        pkg_check_modules(libnotify REQUIRED IMPORTED_TARGET libnotify)
+    endif()
 endif()
 
 if (WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_SERVER)
-    pkg_check_modules(librsvg-2.0 REQUIRED IMPORTED_TARGET librsvg-2.0)
+    if (WIVRN_USE_LIBRSVG)
+        pkg_check_modules(librsvg-2.0 REQUIRED IMPORTED_TARGET librsvg-2.0)
+    endif()
     find_package(LibArchive REQUIRED)
     find_package(PNG REQUIRED)
 endif()
@@ -186,7 +240,7 @@ if (WIVRN_BUILD_CLIENT OR WIVRN_BUILD_DASHBOARD)
     find_package(Gettext REQUIRED)
 endif()
 
-if (WIVRN_USE_PIPEWIRE AND (WIVRN_BUILD_SERVER OR (WIVRN_BUILD_CLIENT AND NOT ANDROID)))
+if (WIVRN_USE_PIPEWIRE AND NOT WIN32 AND (WIVRN_BUILD_SERVER OR (WIVRN_BUILD_CLIENT AND NOT ANDROID)))
     pkg_check_modules(libpipewire REQUIRED IMPORTED_TARGET libpipewire-0.3)
 endif()
 
@@ -232,7 +286,9 @@ endif()
 
 if (WIVRN_BUILD_WIVRNCTL)
     find_package(CLI11 REQUIRED)
-    pkg_search_module(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd libelogind)
+    if(NOT WIN32)
+        pkg_search_module(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd libelogind)
+    endif()
 endif()
 
 # Common dependencies
@@ -334,26 +390,42 @@ add_subdirectory(tools)
 
 foreach(TARGET_NAME wivrn wivrn-server wivrn-dashboard wivrn-common wivrn-dissector wivrnctl)
     if(TARGET ${TARGET_NAME})
-        target_compile_options(${TARGET_NAME} PRIVATE
-            -fdiagnostics-color -Wall -Wextra -pedantic
-            -ffast-math
-            -Wundef
-            -Wno-missing-field-initializers
-            -Wno-unused-parameter
-            -Wno-comment
-            -Wno-unused-variable
-            -Wno-sign-compare
-            $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-volatile -Wno-array-bounds>
-            $<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wno-deprecated-volatile -Wno-unneeded-internal-declaration -Wno-c99-extensions -Wno-unused-private-field>
-        )
+        if(MSVC)
+            target_compile_options(${TARGET_NAME} PRIVATE
+                /W3 /permissive- /Zc:__cplusplus /EHsc
+                /wd4244 /wd4267 /wd4996
+                $<$<COMPILE_LANGUAGE:CXX>:/std:c++latest>
+            )
+        else()
+            target_compile_options(${TARGET_NAME} PRIVATE
+                -fdiagnostics-color -Wall -Wextra -pedantic
+                -ffast-math
+                -Wundef
+                -Wno-missing-field-initializers
+                -Wno-unused-parameter
+                -Wno-comment
+                -Wno-unused-variable
+                -Wno-sign-compare
+                $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-volatile -Wno-array-bounds>
+                $<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wno-deprecated-volatile -Wno-unneeded-internal-declaration -Wno-c99-extensions -Wno-unused-private-field>
+            )
+        endif()
 
         if (WIVRN_WERROR)
-            target_compile_options(${TARGET_NAME} PRIVATE -Werror)
+            if(MSVC)
+                target_compile_options(${TARGET_NAME} PRIVATE /WX)
+            else()
+                target_compile_options(${TARGET_NAME} PRIVATE -Werror)
+            endif()
         endif()
 
         if (WIVRN_ADDRESS_SANITIZER AND NOT ${TARGET_NAME} STREQUAL wivrn-dissector)
-            target_compile_options(${TARGET_NAME} PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-            target_link_options(${TARGET_NAME} PRIVATE -fsanitize=address)
+            if(MSVC)
+                target_compile_options(${TARGET_NAME} PRIVATE /fsanitize=address)
+            else()
+                target_compile_options(${TARGET_NAME} PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+                target_link_options(${TARGET_NAME} PRIVATE -fsanitize=address)
+            endif()
         endif()
 
     endif()

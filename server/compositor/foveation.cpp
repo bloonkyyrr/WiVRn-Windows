@@ -34,6 +34,10 @@
 #include <vulkan/vulkan_structs.hpp>
 #include <openxr/openxr.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define RENDER_FOVEATION_BUFFER_DIMENSIONS (4096 + 1)
 
 namespace

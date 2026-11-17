@@ -18,6 +18,7 @@
 
 #include "wivrn_trace.h"
 
+#include "platform.h"
 #include "util/u_trace_marker.h"
 
 #ifdef WIVRN_USE_PERFETTO
@@ -35,7 +36,9 @@
 #include <memory>
 #include <perfetto.h>
 #include <string>
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 #include <vector>
 
 PERFETTO_DEFINE_CATEGORIES(
@@ -110,7 +113,11 @@ std::string now_timestamp()
 {
 	const std::time_t now = std::time(nullptr);
 	std::tm tm{};
+#if defined(_WIN32)
+	localtime_s(&tm, &now);
+#else
 	localtime_r(&now, &tm);
+#endif
 	char buf[16];
 	std::strftime(buf, sizeof(buf), "%Y%m%d-%H%M%S", &tm);
 	return buf;
@@ -119,7 +126,7 @@ std::string now_timestamp()
 std::string expand_file_placeholders(std::string s)
 {
 	const std::string ts = now_timestamp();
-	const std::string pid = std::to_string(getpid());
+	const std::string pid = std::to_string(platform::current_process_id());
 	for (size_t pos = 0; (pos = s.find('%', pos)) != std::string::npos;)
 	{
 		if (pos + 1 >= s.size())
@@ -146,7 +153,7 @@ std::string resolve_inproc_file_path()
 {
 	const char * file = std::getenv("WIVRN_TRACING_FILE");
 	if (!file or !*file)
-		return "wivrn-" + now_timestamp() + "-" + std::to_string(getpid()) + ".pftrace";
+		return "wivrn-" + now_timestamp() + "-" + std::to_string(platform::current_process_id()) + ".pftrace";
 	return expand_file_placeholders(file);
 }
 

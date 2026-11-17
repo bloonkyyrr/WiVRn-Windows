@@ -20,20 +20,27 @@
 #include "wivrn_sockets.h"
 
 #include "crypto.h"
+#include "platform.h"
+
 #include <algorithm>
-#include <arpa/inet.h>
 #include <cassert>
+#include <cstring>
 #include <memory>
+#include <string>
+#include <system_error>
+
+#if defined(_WIN32)
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
-#include <string.h>
-#include <string>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
-#include <system_error>
 #include <unistd.h>
+#endif
 
 thread_local crypto::encrypt_context wivrn::UDP::encrypter{EVP_aes_128_ctr()};
 std::atomic<uint64_t> wivrn::UDP::iv_counter;
@@ -63,15 +70,16 @@ wivrn::fd_base & wivrn::fd_base::operator=(wivrn::fd_base && other)
 wivrn::fd_base::~fd_base()
 {
 	if (fd >= 0)
-		::close(fd);
+		platform::close_socket(fd);
 }
 
 wivrn::UDP::UDP()
 {
-	fd = socket(AF_INET6, SOCK_DGRAM, 0);
+	platform::initialize_networking();
+	fd = (int)socket(AF_INET6, SOCK_DGRAM, 0);
 	if (fd < 0)
-		throw std::system_error{errno, std::generic_category()};
-	fcntl(fd, F_SETFD, FD_CLOEXEC);
+		platform::throw_socket_error("socket");
+	platform::set_close_on_exec(fd);
 }
 
 wivrn::UDP::UDP(int fd)
@@ -82,19 +90,19 @@ wivrn::UDP::UDP(int fd)
 void wivrn::UDP::bind(sockaddr_in6 address)
 {
 	if (::bind(fd, (sockaddr *)&address, sizeof(address)) < 0)
-		throw std::system_error{errno, std::generic_category()};
+		platform::throw_socket_error("bind");
 }
 
 void wivrn::UDP::connect(sockaddr_in6 sa)
 {
 	if (::connect(fd, (sockaddr *)&sa, sizeof(sa)) < 0)
-		throw std::system_error{errno, std::generic_category()};
+		platform::throw_socket_error("connect");
 }
 
 void wivrn::UDP::connect(sockaddr_in sa)
 {
 	if (::connect(fd, (sockaddr *)&sa, sizeof(sa)) < 0)
-		throw std::system_error{errno, std::generic_category()};
+		platform::throw_socket_error("connect");
 }
 
 void wivrn::UDP::subscribe_multicast(in6_addr address)
@@ -104,10 +112,10 @@ void wivrn::UDP::subscribe_multicast(in6_addr address)
 	ipv6_mreq subscribe{};
 	subscribe.ipv6mr_multiaddr = address;
 
-	if (setsockopt(fd, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, &subscribe, sizeof(subscribe)) < 0)
+	if (setsockopt(fd, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, (const char *)&subscribe, sizeof(subscribe)) < 0)
 	{
-		::close(fd);
-		throw std::system_error{errno, std::generic_category()};
+		platform::close_socket(fd);
+		platform::throw_socket_error("setsockopt IPV6_ADD_MEMBERSHIP");
 	}
 }
 
@@ -118,39 +126,39 @@ void wivrn::UDP::unsubscribe_multicast(in6_addr address)
 	ipv6_mreq subscribe{};
 	subscribe.ipv6mr_multiaddr = address;
 
-	if (setsockopt(fd, IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP, &subscribe, sizeof(subscribe)) < 0)
+	if (setsockopt(fd, IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP, (const char *)&subscribe, sizeof(subscribe)) < 0)
 	{
-		::close(fd);
-		throw std::system_error{errno, std::generic_category()};
+		platform::close_socket(fd);
+		platform::throw_socket_error("setsockopt IPV6_DROP_MEMBERSHIP");
 	}
 }
 
 void wivrn::UDP::set_receive_buffer_size(int size)
 {
-	setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+	setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (const char *)&size, sizeof(size));
 }
 
 void wivrn::UDP::set_send_buffer_size(int size)
 {
-	setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+	setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (const char *)&size, sizeof(size));
 }
 
 void wivrn::UDP::set_tos(int tos)
 {
-	int err = setsockopt(fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
+	int err = setsockopt(fd, IPPROTO_IP, IP_TOS, (const char *)&tos, sizeof(tos));
 	if (err == -1)
 	{
-		throw std::system_error{errno, std::generic_category()};
+		platform::throw_socket_error("setsockopt IP_TOS");
 	}
 }
 
 void wivrn::TCP::init()
 {
 	int nodelay = 1;
-	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay)) < 0)
+	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay)) < 0)
 	{
-		::close(fd);
-		throw std::system_error{errno, std::generic_category()};
+		platform::close_socket(fd);
+		platform::throw_socket_error("setsockopt TCP_NODELAY");
 	}
 
 	mutex = std::make_unique<std::mutex>();
@@ -165,15 +173,16 @@ wivrn::TCP::TCP(int fd)
 
 wivrn::TCP::TCP(sockaddr_in6 sa)
 {
-	fd = socket(AF_INET6, SOCK_STREAM, 0);
+	platform::initialize_networking();
+	fd = (int)socket(AF_INET6, SOCK_STREAM, 0);
 	if (fd < 0)
-		throw std::system_error{errno, std::generic_category()};
-	fcntl(fd, F_SETFD, FD_CLOEXEC);
+		platform::throw_socket_error("socket");
+	platform::set_close_on_exec(fd);
 
 	if (connect(fd, (sockaddr *)&sa, sizeof(sa)) < 0)
 	{
-		::close(fd);
-		throw std::system_error{errno, std::generic_category()};
+		platform::close_socket(fd);
+		platform::throw_socket_error("connect");
 	}
 
 	init();
@@ -181,15 +190,16 @@ wivrn::TCP::TCP(sockaddr_in6 sa)
 
 wivrn::TCP::TCP(sockaddr_in sa)
 {
-	fd = socket(AF_INET, SOCK_STREAM, 0);
+	platform::initialize_networking();
+	fd = (int)socket(AF_INET, SOCK_STREAM, 0);
 	if (fd < 0)
-		throw std::system_error{errno, std::generic_category()};
-	fcntl(fd, F_SETFD, FD_CLOEXEC);
+		platform::throw_socket_error("socket");
+	platform::set_close_on_exec(fd);
 
 	if (connect(fd, (sockaddr *)&sa, sizeof(sa)) < 0)
 	{
-		::close(fd);
-		throw std::system_error{errno, std::generic_category()};
+		platform::close_socket(fd);
+		platform::throw_socket_error("connect");
 	}
 
 	init();
@@ -197,18 +207,19 @@ wivrn::TCP::TCP(sockaddr_in sa)
 
 wivrn::TCPListener::TCPListener(int port)
 {
-	fd = socket(AF_INET6, SOCK_STREAM, 0);
+	platform::initialize_networking();
+	fd = (int)socket(AF_INET6, SOCK_STREAM, 0);
 
 	if (fd < 0)
 	{
-		throw std::system_error{errno, std::generic_category()};
+		platform::throw_socket_error("socket");
 	}
 
 	int reuse_addr = 1;
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr)) < 0)
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse_addr, sizeof(reuse_addr)) < 0)
 	{
-		::close(fd);
-		throw std::system_error{errno, std::generic_category()};
+		platform::close_socket(fd);
+		platform::throw_socket_error("setsockopt SO_REUSEADDR");
 	}
 
 	sockaddr_in6 addr{};
@@ -218,15 +229,15 @@ wivrn::TCPListener::TCPListener(int port)
 
 	if (bind(fd, (sockaddr *)&addr, sizeof(addr)) < 0)
 	{
-		::close(fd);
-		throw std::system_error{errno, std::generic_category()};
+		platform::close_socket(fd);
+		platform::throw_socket_error("bind");
 	}
 
 	int backlog = 1;
 	if (listen(fd, backlog) < 0)
 	{
-		::close(fd);
-		throw std::system_error{errno, std::generic_category()};
+		platform::close_socket(fd);
+		platform::throw_socket_error("listen");
 	}
 }
 
@@ -235,14 +246,27 @@ std::pair<wivrn::deserialization_packet, sockaddr_in6> wivrn::UDP::receive_from_
 	sockaddr_in6 addr;
 	socklen_t addrlen = sizeof(addr);
 
-	ssize_t peeked = recvfrom(fd, nullptr, 0, MSG_PEEK | MSG_TRUNC, (sockaddr *)&addr, &addrlen);
+#if defined(_WIN32)
+	u_long available = 0;
+	if (ioctlsocket((SOCKET)(uintptr_t)fd, FIONREAD, &available) != 0)
+		platform::throw_socket_error("recvfrom: FIONREAD");
+	if (available == 0)
+		return {};
+
+	auto buffer = std::make_shared_for_overwrite<uint8_t[]>(available);
+	int received = recvfrom(fd, (char *)buffer.get(), (int)available, 0, (sockaddr *)&addr, (int *)&addrlen);
+	if (received < 0)
+		platform::throw_socket_error("recvfrom");
+#else
+	auto peeked = recvfrom(fd, nullptr, 0, MSG_PEEK | MSG_TRUNC, (sockaddr *)&addr, &addrlen);
 	if (peeked < 0)
-		throw std::system_error{errno, std::generic_category()};
+		platform::throw_socket_error("recvfrom");
 
 	auto buffer = std::make_shared_for_overwrite<uint8_t[]>(peeked);
-	ssize_t received = recvfrom(fd, buffer.get(), peeked, 0, (sockaddr *)&addr, &addrlen);
+	auto received = recvfrom(fd, buffer.get(), peeked, 0, (sockaddr *)&addr, &addrlen);
 	if (received < 0)
-		throw std::system_error{errno, std::generic_category()};
+		platform::throw_socket_error("recvfrom");
+#endif
 
 	std::span message{buffer.get(), (size_t)received};
 
@@ -277,6 +301,10 @@ wivrn::deserialization_packet wivrn::UDP::receive_pending()
 
 wivrn::deserialization_packet wivrn::UDP::receive_raw()
 {
+#if defined(_WIN32)
+	// Winsock has no recvmmsg; read one datagram per call.
+	return receive_from_raw().first;
+#else
 	if (not messages.empty())
 	{
 		auto span = messages.back();
@@ -310,7 +338,7 @@ wivrn::deserialization_packet wivrn::UDP::receive_raw()
 	int received = recvmmsg(fd, mmsgs.data(), num_messages, MSG_DONTWAIT, nullptr);
 
 	if (received < 0)
-		throw std::system_error{errno, std::generic_category()};
+		platform::throw_socket_error("recvmmsg");
 	if (received == 0)
 		throw socket_shutdown();
 
@@ -344,14 +372,42 @@ wivrn::deserialization_packet wivrn::UDP::receive_raw()
 	}
 
 	__builtin_unreachable();
+#endif
 }
 
 size_t wivrn::UDP::send_raw(serialization_packet && packet)
 {
+	std::vector<std::span<uint8_t>> & data = packet;
+
+#if defined(_WIN32)
+	thread_local std::vector<WSABUF> buffers;
+	buffers.clear();
+
+	uint64_t counter;
+	if (encrypted)
+	{
+		counter = iv_counter.fetch_add(1);
+
+		std::array<uint8_t, 16> full_iv;
+		memcpy(full_iv.data(), &counter, sizeof(uint64_t)); // TODO: endianness?
+		memcpy(full_iv.data() + sizeof(uint64_t), send_iv_header.data(), send_iv_header.size());
+
+		buffers.push_back({(ULONG)sizeof(uint64_t), (CHAR *)&counter});
+
+		encrypter.set_key_and_iv(key, full_iv);
+		encrypter.encrypt_in_place(data);
+	}
+
+	for (const auto & span: data)
+		buffers.push_back({(ULONG)span.size_bytes(), (CHAR *)span.data()});
+
+	DWORD sent = 0;
+	if (WSASend((SOCKET)(uintptr_t)fd, buffers.data(), (DWORD)buffers.size(), &sent, 0, nullptr, nullptr) == SOCKET_ERROR)
+		platform::throw_socket_error("WSASend");
+	return sent;
+#else
 	thread_local std::vector<iovec> iovecs;
 	iovecs.clear();
-
-	std::vector<std::span<uint8_t>> & data = packet;
 
 	uint64_t counter;
 	if (encrypted)
@@ -373,11 +429,18 @@ size_t wivrn::UDP::send_raw(serialization_packet && packet)
 
 	if (ssize_t sent = ::writev(fd, iovecs.data(), iovecs.size()); sent >= 0)
 		return sent;
-	throw std::system_error{errno, std::generic_category()};
+	platform::throw_socket_error("writev");
+#endif
 }
 
 size_t wivrn::UDP::send_many_raw(std::span<serialization_packet> packets)
 {
+#if defined(_WIN32)
+	size_t sent = 0;
+	for (auto & packet: packets)
+		sent += send_raw(std::move(packet));
+	return sent;
+#else
 	thread_local std::vector<iovec> iovecs;
 	thread_local std::vector<mmsghdr> mmsgs;
 	thread_local std::vector<uint64_t> iv_counters;
@@ -430,15 +493,16 @@ size_t wivrn::UDP::send_many_raw(std::span<serialization_packet> packets)
 
 	// sendmmsg may not send all messages, just consider them as lost for UDP
 	if (sendmmsg(fd, mmsgs.data(), mmsgs.size(), 0) < 0)
-		throw std::system_error{errno, std::generic_category()};
+		platform::throw_socket_error("sendmmsg");
 	return sent;
+#endif
 }
 
 wivrn::deserialization_packet wivrn::TCP::receive_raw()
 {
 	static constexpr size_t max_payload = 16 * 1024 * 1024;
 
-	ssize_t expected_size;
+	std::ptrdiff_t expected_size;
 
 	if (data.size_bytes() < sizeof(uint32_t))
 	{
@@ -465,10 +529,14 @@ wivrn::deserialization_packet wivrn::TCP::receive_raw()
 
 	if (capacity_left > 0)
 	{
-		ssize_t received_size = recv(fd, &*data.end(), capacity_left, MSG_DONTWAIT);
+#if defined(_WIN32)
+		auto received_size = recv(fd, (char *)&*data.end(), (int)capacity_left, 0);
+#else
+		auto received_size = recv(fd, &*data.end(), capacity_left, MSG_DONTWAIT);
+#endif
 
 		if (received_size < 0)
-			throw std::system_error{errno, std::generic_category()};
+			platform::throw_socket_error("recv");
 
 		if (received_size == 0)
 			throw socket_shutdown{};
@@ -518,10 +586,55 @@ wivrn::deserialization_packet wivrn::TCP::receive_pending()
 size_t wivrn::TCP::send_raw(serialization_packet && packet)
 {
 	size_t total_sent = 0;
+	std::vector<std::span<uint8_t>> & data = packet;
+
+#if defined(_WIN32)
+	thread_local std::vector<WSABUF> buffers;
+	buffers.clear();
+
+	uint32_t size = 0;
+	buffers.push_back({(ULONG)sizeof(size), (CHAR *)&size});
+	for (const auto & span: data)
+	{
+		size += span.size_bytes();
+		buffers.push_back({(ULONG)span.size_bytes(), (CHAR *)span.data()});
+	}
+
+	std::lock_guard lock(*mutex);
+	if (encrypter)
+	{
+		data.insert(data.begin(), {(uint8_t *)&size, sizeof(size)});
+		encrypter.encrypt_in_place(data);
+	}
+
+	size_t index = 0;
+	while (index < buffers.size())
+	{
+		DWORD sent = 0;
+		if (WSASend((SOCKET)(uintptr_t)fd, buffers.data() + index, (DWORD)(buffers.size() - index), &sent, 0, nullptr, nullptr) == SOCKET_ERROR)
+			platform::throw_socket_error("WSASend");
+
+		if (sent == 0)
+			throw socket_shutdown{};
+
+		total_sent += sent;
+
+		size_t consumed = sent;
+		while (index < buffers.size() && consumed >= buffers[index].len)
+		{
+			consumed -= buffers[index].len;
+			++index;
+		}
+		if (index < buffers.size())
+		{
+			buffers[index].buf += consumed;
+			buffers[index].len -= (ULONG)consumed;
+		}
+	}
+	return total_sent;
+#else
 	thread_local std::vector<iovec> iovecs;
 	iovecs.clear();
-
-	std::vector<std::span<uint8_t>> & data = packet;
 
 	uint32_t size = 0;
 	iovecs.emplace_back(&size, sizeof(size));
@@ -556,7 +669,7 @@ size_t wivrn::TCP::send_raw(serialization_packet && packet)
 			throw socket_shutdown{};
 
 		if (sent < 0)
-			throw std::system_error{errno, std::generic_category()};
+			platform::throw_socket_error("sendmsg");
 
 		total_sent += sent;
 
@@ -572,10 +685,17 @@ size_t wivrn::TCP::send_raw(serialization_packet && packet)
 		hdr.msg_iov[0].iov_base = (void *)((uintptr_t)hdr.msg_iov[0].iov_base + sent);
 		hdr.msg_iov[0].iov_len -= sent;
 	}
+#endif
 }
 
 size_t wivrn::TCP::send_many_raw(std::span<serialization_packet> packets)
 {
+#if defined(_WIN32)
+	size_t total_sent = 0;
+	for (auto & packet: packets)
+		total_sent += send_raw(std::move(packet));
+	return total_sent;
+#else
 	thread_local std::vector<iovec> iovecs;
 	thread_local std::vector<uint32_t> sizes;
 	thread_local std::vector<std::span<uint8_t>> spans;
@@ -630,7 +750,7 @@ size_t wivrn::TCP::send_many_raw(std::span<serialization_packet> packets)
 			throw socket_shutdown{};
 
 		if (sent < 0)
-			throw std::system_error{errno, std::generic_category()};
+			platform::throw_socket_error("sendmsg");
 
 		total_sent += sent;
 
@@ -646,6 +766,7 @@ size_t wivrn::TCP::send_many_raw(std::span<serialization_packet> packets)
 		hdr.msg_iov[0].iov_base = (void *)((uintptr_t)hdr.msg_iov[0].iov_base + sent);
 		hdr.msg_iov[0].iov_len -= sent;
 	}
+#endif
 }
 
 void wivrn::UDP::set_aes_key_and_ivs(std::span<std::uint8_t, 16> key_, std::span<std::uint8_t, 8> recv_iv_header_, std::span<std::uint8_t, 8> send_iv_header_)

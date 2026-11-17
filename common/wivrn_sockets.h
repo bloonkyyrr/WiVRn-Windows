@@ -20,18 +20,22 @@
 #pragma once
 
 #include "crypto.h"
+#include "platform.h"
 #include "wivrn_serialization.h"
 
 #include <atomic>
 #include <cassert>
+#include <cstddef>
 #include <exception>
-#include <fcntl.h>
 #include <memory>
 #include <mutex>
-#include <netinet/ip.h>
 #include <span>
+#include <system_error>
 #include <utility>
 #include <vector>
+#if !defined(_WIN32)
+#include <netinet/ip.h>
+#endif
 
 namespace wivrn
 {
@@ -133,7 +137,7 @@ public:
 class TCP : public fd_base
 {
 	std::shared_ptr<uint8_t[]> buffer;
-	ssize_t capacity_left = 0;
+	std::ptrdiff_t capacity_left = 0;
 	std::span<uint8_t> data;
 	std::unique_ptr<std::mutex> mutex;
 
@@ -172,9 +176,9 @@ public:
 		socklen_t addrlen = sizeof(addr);
 
 		int fd2 = ::accept(fd, (sockaddr *)&addr, &addrlen);
-		fcntl(fd, F_SETFD, FD_CLOEXEC);
 		if (fd2 < 0)
-			throw std::system_error{errno, std::generic_category()};
+			platform::throw_socket_error("accept");
+		platform::set_close_on_exec(fd2);
 
 		return {T{fd2}, addr};
 	}

@@ -17,10 +17,14 @@
  */
 
 #include "sleep_inhibitor.h"
+
+#include "platform.h"
+
+#if !defined(_WIN32)
+
 #include <gio/gio.h>
 #include <glib.h>
 #include <iostream>
-#include <unistd.h>
 
 sleep_inhibitor::sleep_inhibitor()
 {
@@ -85,5 +89,24 @@ sleep_inhibitor::sleep_inhibitor()
 sleep_inhibitor::~sleep_inhibitor()
 {
 	if (fd >= 0)
-		close(fd);
+		wivrn::platform::close_socket(fd);
 }
+
+#else
+
+#include <windows.h>
+
+#include <iostream>
+
+sleep_inhibitor::sleep_inhibitor()
+{
+	if (SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) == 0)
+		std::cerr << "Cannot inhibit system sleep" << std::endl;
+}
+
+sleep_inhibitor::~sleep_inhibitor()
+{
+	SetThreadExecutionState(ES_CONTINUOUS);
+}
+
+#endif

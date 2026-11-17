@@ -18,8 +18,10 @@
 
 #include "vdf.h"
 
-#include <boost/iostreams/device/mapped_file.hpp>
+#include <cassert>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 
 namespace
 {
@@ -134,12 +136,17 @@ bool wivrn::vdf::string::operator==(const char * b) const
 
 wivrn::vdf::root::root(const std::filesystem::path & file)
 {
-	boost::iostreams::mapped_file in{file};
-	opaque = in;
+	std::ifstream input(file, std::ios::binary);
+	input.exceptions(std::ios_base::badbit | std::ios_base::failbit);
 
-	const char * pos = in.begin();
-	key = read_string(pos, in.end());
-	value = read_value(pos, in.end());
+	std::ostringstream buffer;
+	buffer << input.rdbuf();
+	std::string data = buffer.str();
+	opaque = data;
+
+	const char * pos = data.data();
+	key = read_string(pos, data.data() + data.size());
+	value = read_value(pos, data.data() + data.size());
 }
 
 void dump(const wivrn::vdf::keyvalue & kv, int depth)

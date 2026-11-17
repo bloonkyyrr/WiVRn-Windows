@@ -27,7 +27,7 @@
 #include "wivrn_ipc.h"
 #include "wivrn_sockets.h"
 
-#include <sys/poll.h>
+#include "platform.h"
 
 std::unique_ptr<wivrn::TCP> wivrn::accept_connection(wivrn_session & cnx, std::stop_token stop, std::function<void(wivrn_session &)> tick)
 {
@@ -36,13 +36,13 @@ std::unique_ptr<wivrn::TCP> wivrn::accept_connection(wivrn_session & cnx, std::s
 	wivrn::TCPListener listener(configuration().port);
 
 	pollfd fds[2]{
-	        {.fd = listener.get_fd(), .events = POLLIN},
-	        {.fd = wivrn_ipc_socket_monado->get_fd(), .events = POLLIN},
+	        {.fd = (SOCKET)(uintptr_t)listener.get_fd(), .events = POLLIN},
+	        {.fd = (SOCKET)(uintptr_t)wivrn_ipc_socket_monado->get_fd(), .events = POLLIN},
 	};
 
 	while (not stop.stop_requested())
 	{
-		if (poll(fds, std::size(fds), 100) < 0)
+		if (platform::poll_sockets(fds, std::size(fds), 100) < 0)
 		{
 			perror("poll");
 			return {};

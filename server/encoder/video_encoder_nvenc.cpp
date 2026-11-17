@@ -25,6 +25,7 @@
 #include "utils/wivrn_trace.h"
 #include "utils/wivrn_vk_bundle.h"
 
+#ifndef _WIN32
 bool operator==(const GUID & l, const GUID & r)
 {
 	return l.Data1 == r.Data1 and
@@ -32,8 +33,10 @@ bool operator==(const GUID & l, const GUID & r)
 	       l.Data3 == r.Data3 and
 	       std::ranges::equal(l.Data4, r.Data4);
 }
+#endif
 
 #include <algorithm>
+#include <exception>
 #include <stdexcept>
 
 #define NVENC_CHECK_NOENCODER(x)                                          \
@@ -98,7 +101,7 @@ static void check_encode_guid_supported(std::shared_ptr<video_encoder_nvenc_shar
 	std::vector<GUID> encodeGUIDs(count);
 	NVENC_CHECK(shared_state->fn.nvEncGetEncodeGUIDs(session_handle, encodeGUIDs.data(), count, &count));
 
-	if (!std::ranges::contains(encodeGUIDs, encode_guid))
+	if (std::none_of(encodeGUIDs.begin(), encodeGUIDs.end(), [&](const GUID & g) { return IsEqualGUID(g, encode_guid); }))
 	{
 		throw std::runtime_error("nvenc: GPU doesn't support selected codec.");
 	}
@@ -112,7 +115,7 @@ static void check_preset_guid_supported(std::shared_ptr<video_encoder_nvenc_shar
 	std::vector<GUID> presetGUIDs(count);
 	NVENC_CHECK(shared_state->fn.nvEncGetEncodePresetGUIDs(session_handle, encode_guid, presetGUIDs.data(), count, &count));
 
-	if (!std::ranges::contains(presetGUIDs, preset_guid))
+	if (std::none_of(presetGUIDs.begin(), presetGUIDs.end(), [&](const GUID & g) { return IsEqualGUID(g, preset_guid); }))
 	{
 		throw std::runtime_error("nvenc: Internal error. GPU doesn't support selected encoder preset.");
 	}
@@ -126,7 +129,7 @@ static void check_profile_guid_supported(std::shared_ptr<video_encoder_nvenc_sha
 	std::vector<GUID> profileGUIDs(count);
 	NVENC_CHECK(shared_state->fn.nvEncGetEncodeProfileGUIDs(session_handle, encodeGUID, profileGUIDs.data(), count, &count));
 
-	if (!std::ranges::contains(profileGUIDs, profileGUID))
+	if (std::none_of(profileGUIDs.begin(), profileGUIDs.end(), [&](const GUID & g) { return IsEqualGUID(g, profileGUID); }))
 	{
 		throw std::runtime_error("nvenc: " + err_msg);
 	}

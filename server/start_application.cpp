@@ -25,9 +25,13 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
-#include <stdlib.h>
+#include <thread>
+
+#if !defined(_WIN32)
+#include <glib.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 namespace wivrn
 {
@@ -109,133 +113,162 @@ void forked_children::start_application(const std::vector<std::string> & args, c
 	if (args.empty())
 		return;
 
-	pid_t application_pid = fork();
+	std::vector<std::string> command;
+	std::optional<std::filesystem::path> working_directory;
 
-	if (application_pid < 0)
-		throw std::system_error(errno, std::system_category(), "fork");
-
-	if (application_pid > 0)
+	if (wivrn::flatpak_key(wivrn::flatpak::section::session_bus_policy, "org.freedesktop.Flatpak") == "talk")
 	{
-		guint app_watch = g_child_watch_add(
-		        application_pid,
-		        [](pid_t pid, int status, void * self_) {
-			        auto self = (forked_children *)self_;
-			        bool empty = self->children.empty();
+		command.push_back("flatpak-spawn");
+		command.push_back("--host");
+		if (path)
+			command.push_back("--directory=" + *path);
+	}
+	else if (path)
+	{
+		working_directory = *path;
+	}
+
+	command.insert(command.end(), args.begin(), args.end());
+
+	std::cerr << "Launching " << command.front() << std::endl;
+	std::cerr << "With args:" << std::endl;
+	for (auto & i: command)
+		std::cerr << "    " << std::quoted(i) << std::endl;
+
+	process_id application_pid = platform::spawn_process(command, working_directory, true);
+
+#if defined(_WIN32)
+	{
+		std::lock_guard lock(mutex);
+		children.emplace(application_pid, watches{});
+	}
+
+	waiters.emplace_back([this, application_pid](std::stop_token) {
+		int status = 0;
+		if (platform::wait_process(application_pid, status))
+			display_child_status(status, "Application");
+
+		bool became_empty = false;
+		{
+			std::lock_guard lock(mutex);
+			auto node = children.extract(application_pid);
+			became_empty = not node.empty() and children.empty();
+		}
+		if (became_empty and state_changed_cb)
+			state_changed_cb();
+	});
+#else
+	guint app_watch = g_child_watch_add(
+	        application_pid,
+	        [](process_id pid, int status, void * self_) {
+		        auto self = (forked_children *)self_;
+		        bool was_empty;
+		        bool is_empty;
+		        unsigned int kill_watch = 0;
+		        {
+			        std::lock_guard lock(self->mutex);
+			        was_empty = self->children.empty();
 			        auto node = self->children.extract(pid);
 			        if (not node)
 			        {
 				        std::cerr << "Failed to update child application information" << std::endl;
 			        }
-			        display_child_status(status, "Application");
-			        const auto & watches = node.mapped();
-			        g_source_remove(watches.child);
-			        if (watches.kill)
-				        g_source_remove(watches.kill);
+			        else
+			        {
+				        g_source_remove(node.mapped().child);
+				        kill_watch = node.mapped().kill;
+			        }
+			        is_empty = self->children.empty();
+		        }
+		        display_child_status(status, "Application");
+		        if (kill_watch)
+			        g_source_remove(kill_watch);
 
-			        if (self->state_changed_cb and self->children.empty() and not empty)
-				        self->state_changed_cb();
-		        },
-		        this);
+		        if (self->state_changed_cb and is_empty and not was_empty)
+			        self->state_changed_cb();
+	        },
+	        this);
+	{
+		std::lock_guard lock(mutex);
 		children.emplace(application_pid, watches{.child = app_watch});
-		return;
 	}
-
-	// Start a new process group so that all processes started by the
-	// application can be signaled
-	setpgrp();
-
-	std::vector<std::string> tmp;
-	std::vector<char *> argv;
-	argv.reserve(args.size() + 3);
-
-	if (wivrn::flatpak_key(wivrn::flatpak::section::session_bus_policy, "org.freedesktop.Flatpak") == "talk")
-	{
-		tmp.push_back("flatpak-spawn");
-		tmp.push_back("--host");
-		if (path)
-			tmp.push_back("--directory=" + *path);
-	}
-	else if (path)
-	{
-		try
-		{
-			std::filesystem::current_path(*path);
-		}
-		catch (std::exception & e)
-		{
-			std::cerr << "Failed to set path to " << *path << ": " << e.what() << std::endl;
-		}
-	}
-
-	tmp.insert(tmp.end(), args.begin(), args.end());
-	for (auto & arg: tmp)
-		argv.push_back(arg.data());
-	argv.push_back(nullptr);
-
-	std::string executable = argv.front();
-
-	std::cerr << "Launching " << executable << std::endl;
-	std::cerr << "With args:" << std::endl;
-	for (auto & i: argv)
-	{
-		if (i)
-			std::cerr << "    " << std::quoted(i) << std::endl;
-	}
-
-	execvp(executable.c_str(), argv.data());
-	perror("Failed to start application");
-	exit(EXIT_FAILURE);
+#endif
 }
 
 forked_children::~forked_children()
 {
+#if defined(_WIN32)
+	std::vector<process_id> pids;
+	{
+		std::lock_guard lock(mutex);
+		state_changed_cb = nullptr;
+		for (const auto & [pid, watches]: children)
+		{
+			(void)watches;
+			pids.push_back(pid);
+		}
+	}
+	for (process_id pid: pids)
+		platform::terminate_process_group(pid, true);
+	waiters.clear();
+#else
+	std::lock_guard lock(mutex);
 	for (auto & [pid, watches]: children)
 	{
 		g_source_remove(watches.child);
 		if (watches.kill)
 			g_source_remove(watches.kill);
 	}
+#endif
 }
 
 bool forked_children::running() const
 {
+	std::lock_guard lock(mutex);
 	return not children.empty();
 }
 
 void forked_children::stop()
 {
+#if defined(_WIN32)
+	std::lock_guard lock(mutex);
 	for (auto & [pid, watches]: children)
 	{
-		kill(-pid, SIGTERM);
-		intptr_t pid_ptr = pid;
+		(void)watches;
+		platform::terminate_process_group(pid, true);
+	}
+#else
+	std::lock_guard lock(mutex);
+	for (auto & [pid, watches]: children)
+	{
+		platform::terminate_process_group(pid, false);
 
 		// Send SIGKILL after 1s if it is still running
-		static_assert(sizeof(pid_t) < sizeof(intptr_t));
+		uintptr_t pid_ptr = pid;
 		watches.kill = g_timeout_add(
 		        1000,
 		        [](void * pid_) {
-			        auto pid = (intptr_t)pid_;
+			        auto pid = (process_id)(uintptr_t)pid_;
 			        assert(pid > 0);
-			        kill(-pid, SIGKILL);
+			        platform::terminate_process_group(pid, true);
 			        return G_SOURCE_REMOVE;
 		        },
 		        (void *)pid_ptr);
 	}
+#endif
 }
 
 void display_child_status(int wstatus, const std::string & name)
 {
-	std::cerr << name << " exited, exit status " << WEXITSTATUS(wstatus);
-	if (WIFSIGNALED(wstatus))
+	std::cerr << name << " exited, exit status " << platform::process_exit_code(wstatus);
+#if !defined(_WIN32)
+	if (platform::process_terminated_by_signal(wstatus))
 	{
-		std::cerr << ", received signal " << sigabbrev_np(WTERMSIG(wstatus)) << " ("
-		          << strsignal(WTERMSIG(wstatus)) << ")"
-		          << (WCOREDUMP(wstatus) ? ", core dumped" : "") << std::endl;
+		std::cerr << ", received signal " << platform::process_signal_name(wstatus)
+		          << (WCOREDUMP(wstatus) ? ", core dumped" : "");
 	}
-	else
-	{
-		std::cerr << std::endl;
-	}
+#endif
+	std::cerr << std::endl;
 }
 
 } // namespace wivrn

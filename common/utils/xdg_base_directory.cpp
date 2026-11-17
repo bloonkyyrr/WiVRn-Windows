@@ -18,11 +18,15 @@
  */
 
 #include "strings.h"
+#include "platform.h"
 #include <cstdlib>
 #include <filesystem>
 
 std::filesystem::path xdg_config_home()
 {
+#if defined(_WIN32)
+	return wivrn::platform::config_directory().parent_path();
+#else
 	if (const char * xdg_config_home = std::getenv("XDG_CONFIG_HOME"))
 		return xdg_config_home;
 
@@ -30,10 +34,14 @@ std::filesystem::path xdg_config_home()
 		return std::filesystem::path(home) / ".config";
 
 	return ".";
+#endif
 }
 
 std::filesystem::path xdg_cache_home()
 {
+#if defined(_WIN32)
+	return wivrn::platform::cache_directory().parent_path();
+#else
 	if (const char * xdg_cache_home = std::getenv("XDG_CACHE_HOME"))
 		return xdg_cache_home;
 
@@ -41,10 +49,14 @@ std::filesystem::path xdg_cache_home()
 		return std::filesystem::path(home) / ".cache";
 
 	return ".";
+#endif
 }
 
 std::filesystem::path xdg_data_home()
 {
+#if defined(_WIN32)
+	return wivrn::platform::data_directory().parent_path();
+#else
 	if (const char * xdg_data_home = std::getenv("XDG_DATA_HOME"); xdg_data_home and *xdg_data_home)
 		return xdg_data_home;
 
@@ -52,18 +64,26 @@ std::filesystem::path xdg_data_home()
 		return std::filesystem::path(home) / ".local/share";
 
 	return ".";
+#endif
 }
 
 std::filesystem::path xdg_runtime_dir()
 {
+#if defined(_WIN32)
+	return wivrn::platform::runtime_directory();
+#else
 	if (const char * xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR"); xdg_runtime_dir and *xdg_runtime_dir)
 		return xdg_runtime_dir;
 
 	return "/tmp";
+#endif
 }
 
 std::vector<std::filesystem::path> xdg_config_dirs()
 {
+#if defined(_WIN32)
+	return {wivrn::platform::config_directory().parent_path()};
+#else
 	std::vector<std::filesystem::path> paths;
 
 	if (const char * xdg_config_dirs = std::getenv("XDG_CONFIG_DIRS"))
@@ -77,10 +97,17 @@ std::vector<std::filesystem::path> xdg_config_dirs()
 	}
 
 	return paths;
+#endif
 }
 
 std::vector<std::filesystem::path> xdg_data_dirs(bool include_data_home)
 {
+#if defined(_WIN32)
+	std::vector<std::filesystem::path> paths;
+	if (include_data_home)
+		paths.push_back(xdg_data_home());
+	return paths;
+#else
 	std::vector<std::filesystem::path> paths;
 	if (include_data_home)
 		paths.push_back(xdg_data_home());
@@ -97,4 +124,5 @@ std::vector<std::filesystem::path> xdg_data_dirs(bool include_data_home)
 	}
 
 	return paths;
+#endif
 }

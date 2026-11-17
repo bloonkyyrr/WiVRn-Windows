@@ -1,10 +1,28 @@
 #include "hostname.h"
+
+#include "platform.h"
+
+#if defined(_WIN32)
+
+std::string wivrn::hostname()
+{
+	char buffer[256];
+	DWORD size = sizeof(buffer);
+	if (GetComputerNameA(buffer, &size))
+		return std::string(buffer, size);
+	return "no-hostname";
+}
+
+#else
+
 #include <limits.h>
 #include <unistd.h>
 
 #include "util/u_logging.h"
 
 #include <gio/gio.h>
+
+#include <cstring>
 
 static std::string _hostname()
 {
@@ -74,3 +92,5 @@ std::string wivrn::hostname()
 	static std::string result = _hostname();
 	return result;
 }
+
+#endif

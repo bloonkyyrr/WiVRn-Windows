@@ -18,6 +18,12 @@
 
 #pragma once
 
+#if defined(_WIN32)
+
+// pidfd is a Linux-specific mechanism and is not available on Windows.
+
+#else
+
 #if __has_include(<sys/pidfd.h>)
 
 extern "C"
@@ -50,3 +56,5 @@ static int pidfd_send_signal(int pidfd, int sig, siginfo_t * info, unsigned int 
 }
 
 #endif
+
+#endif // !_WIN32

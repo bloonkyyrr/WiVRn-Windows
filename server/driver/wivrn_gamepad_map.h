@@ -21,7 +21,87 @@
 #include "wivrn_packets.h"
 
 #include <cstdint>
+
+#if defined(_WIN32)
+// Windows has no linux/input-event-codes.h; provide the evdev constants used below.
+#ifndef BTN_SOUTH
+#define BTN_SOUTH 0x130
+#endif
+#ifndef BTN_EAST
+#define BTN_EAST 0x131
+#endif
+#ifndef BTN_NORTH
+#define BTN_NORTH 0x133
+#endif
+#ifndef BTN_WEST
+#define BTN_WEST 0x134
+#endif
+#ifndef BTN_TL
+#define BTN_TL 0x136
+#endif
+#ifndef BTN_TR
+#define BTN_TR 0x137
+#endif
+#ifndef BTN_SELECT
+#define BTN_SELECT 0x13a
+#endif
+#ifndef BTN_START
+#define BTN_START 0x13b
+#endif
+#ifndef BTN_MODE
+#define BTN_MODE 0x13c
+#endif
+#ifndef BTN_THUMBL
+#define BTN_THUMBL 0x13d
+#endif
+#ifndef BTN_THUMBR
+#define BTN_THUMBR 0x13e
+#endif
+#ifndef BTN_X
+#define BTN_X 0x133
+#endif
+#ifndef BTN_Y
+#define BTN_Y 0x134
+#endif
+#ifndef BTN_LEFT
+#define BTN_LEFT 0x110
+#endif
+#ifndef BTN_RIGHT
+#define BTN_RIGHT 0x111
+#endif
+#ifndef BTN_MIDDLE
+#define BTN_MIDDLE 0x112
+#endif
+#ifndef BTN_MOUSE
+#define BTN_MOUSE 0x110
+#endif
+#ifndef ABS_X
+#define ABS_X 0x00
+#endif
+#ifndef ABS_Y
+#define ABS_Y 0x01
+#endif
+#ifndef ABS_RX
+#define ABS_RX 0x03
+#endif
+#ifndef ABS_RY
+#define ABS_RY 0x04
+#endif
+#ifndef ABS_Z
+#define ABS_Z 0x02
+#endif
+#ifndef ABS_RZ
+#define ABS_RZ 0x05
+#endif
+#ifndef ABS_HAT0X
+#define ABS_HAT0X 0x10
+#endif
+#ifndef ABS_HAT0Y
+#define ABS_HAT0Y 0x11
+#endif
+#else
 #include <linux/input-event-codes.h>
+#endif
 
 namespace wivrn
 {
