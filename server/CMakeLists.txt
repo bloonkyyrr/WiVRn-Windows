@@ -98,6 +98,14 @@ set(XRT_OXR_RUNTIME_SUFFIX        "wivrn"          CACHE STRING "OpenXR client l
 # FetchContent_MakeAvailable, which is stamp-gated and would skip patching.
 add_subdirectory("${monado_SOURCE_DIR}" "${monado_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
+# Monado's aux_util target compiles ${U_GIT_TAG_CPP}, which the wivrn-version
+# custom target generates. Multi-config generators (Visual Studio) do not infer
+# that ordering from the byproduct alone and would build aux_util first, failing
+# with "cannot open source file .../u_git_tag.cpp". Make it explicit.
+if(TARGET aux_util)
+	add_dependencies(aux_util wivrn-version)
+endif()
+
 if (WIVRN_BUILD_SERVER)
 	add_executable(wivrn-server
 			accept_connection.cpp
