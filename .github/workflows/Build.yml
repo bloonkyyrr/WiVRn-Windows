@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Create a draft release with this tag (leave empty to only build)'
+        description: 'Tag to publish under (leave empty to use the commit-derived tag)'
         required: false
         type: string
 
@@ -169,7 +169,7 @@ jobs:
 
     strategy:
       matrix:
-        buildtype: ['Release', 'Debug', 'DebugWithValidationLayer', 'Oculus']
+        buildtype: ['Release', 'Debug', 'DebugWithValidationLayer']
 
     steps:
     - uses: actions/checkout@v6
@@ -214,11 +214,6 @@ jobs:
         else
           echo "available=false" >> $GITHUB_OUTPUT;
         fi
-        if [[ "${{ secrets.OCULUS_TOKEN }}" != '' ]]; then
-          echo "oculus-token=true" >> $GITHUB_OUTPUT;
-        else
-          echo "oculus-token=false" >> $GITHUB_OUTPUT;
-        fi
 
     - name: Secrets
       if: ${{ steps.secret-check.outputs.available == 'true' }}
@@ -232,27 +227,15 @@ jobs:
     - name: Build
       run: |
         VERSION=$(git describe --tags --always | sed "s/^v\([0-9]\)/\1/")
-        if [ ${{ matrix.buildtype }} = 'Oculus' ]
+        VERSION_CODE=1
+
+        if [ ${{ github.ref_type }} = 'tag' ]
         then
-          SUFFIX=""
-          VERSION_CODE=$(( 2 * $(git rev-list --count HEAD) ))
-          if [ ${{ github.ref_type }} = 'tag' ]
-          then
-                VERSION_CODE=$(( $VERSION_CODE + 1 ))
-          fi
-
-          APPNAME=WiVRn
+              SUFFIX=".github"
+              APPNAME="WiVRn"
         else
-          VERSION_CODE=1
-
-          if [ ${{ github.ref_type }} = 'tag' ]
-          then
-                SUFFIX=".github"
-                APPNAME="WiVRn"
-          else
-                SUFFIX=".github.testing"
-                APPNAME="WiVRn Testing"
-          fi
+              SUFFIX=".github.testing"
+              APPNAME="WiVRn Testing"
         fi
 
         if [ ${{ github.ref_type }} = 'tag' ]
@@ -295,7 +278,6 @@ jobs:
 
     - name: Archive APK
       uses: actions/upload-artifact@v7
-      if: ${{ matrix.buildtype != 'Oculus' }}
       with:
         name: apk-${{ (steps.secret-check.outputs.available == 'false' && matrix.buildtype == 'Release') && 'Release-unsigned' || matrix.buildtype }}
         path: apk/*.apk
@@ -307,41 +289,55 @@ jobs:
         name: symbols-${{ matrix.buildtype }}
         path: debug/**/*.so
 
-    - name: Push to Oculus store
-      if: ${{ matrix.buildtype == 'Oculus' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master') && steps.secret-check.outputs.oculus-token == 'true' }}
-      env:
-        OCULUS_TOKEN: ${{ secrets.OCULUS_TOKEN }}
-      run: |
-        curl -L 'https://www.oculus.com/download_app/?id=5159709737372459' -o ovr-platform-util
-        chmod +x ovr-platform-util
-
-        if [ ${{ github.ref_type }} = 'tag' ]
-        then
-              CHANNEL=RC
-              IS_DRAFT=--draft
-        else
-              CHANNEL=NIGHTLY
-              IS_DRAFT=
-        fi
-
-        ./ovr-platform-util upload-quest-build --app-id 7959676140827574 --token $OCULUS_TOKEN --apk apk/WiVRn-oculus.apk --channel $CHANNEL --age-group TEENS_AND_ADULTS $IS_DRAFT --debug_symbols_dir debug/ --debug-symbols-pattern '*.so'
-
   release:
     name: Create release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [build-windows, build-android]
-    # Tag pushes always release. A manual run may also release, but only when a
-    # tag was entered: a plain branch push must not create one.
-    if: success() && (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != ''))
+    permissions:
+      # Publishing a release needs a write-scoped token; the default token can be
+      # read-only depending on the repository settings.
+      contents: write
+    # Tag pushes publish under their tag, pushes to master publish a build named
+    # after the commit, and a manual run may name the tag itself. Pull requests
+    # and feature branch pushes only build.
+    if: >-
+      success() && (
+        startsWith(github.ref, 'refs/tags/') ||
+        github.ref == 'refs/heads/master' ||
+        (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+      )
 
     steps:
     - uses: actions/checkout@v6
+      with:
+        # git describe needs the tags to name a build that has no tag yet.
+        fetch-depth: 0
+
+    - name: Determine release tag
+      id: tag
+      shell: bash
+      env:
+        RELEASE_TAG: ${{ inputs.release_tag }}
+      run: |
+        if [ -n "${RELEASE_TAG}" ]; then
+          tag="${RELEASE_TAG}"
+        elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+          tag="${GITHUB_REF_NAME}"
+        else
+          # v26.9-41-gf21cd916 for example: unique per commit so every master
+          # build is a release of its own instead of overwriting the last one.
+          tag="v$(git describe --tags --always | sed 's/^v//')"
+        fi
+        echo "Publishing $tag"
+        echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
     - name: Download artifacts (APK)
       uses: actions/download-artifact@v8
       with:
-        name: apk-Release
+        # apk-Release when the signing secrets are set, apk-Release-unsigned otherwise.
+        pattern: apk-*
         path: apk
+        merge-multiple: true
 
     - name: Download artifacts (installer)
       uses: actions/download-artifact@v8
@@ -352,9 +348,9 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v3
       with:
-        tag_name: ${{ inputs.release_tag || github.ref_name }}
-        # Pin a manually named tag to the commit that was built, not to whatever
-        # the default branch points at when the release is published.
+        tag_name: ${{ steps.tag.outputs.tag }}
+        # Pin the tag to the commit that was built, not to whatever the branch
+        # points at when the release is published.
         target_commitish: ${{ github.sha }}
         generate_release_notes: true
         draft: false
