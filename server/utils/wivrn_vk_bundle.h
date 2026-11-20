@@ -63,6 +63,16 @@ uint64_t vk_handle(const T & handle)
 struct vk_bundle
 {
 	static const uint32_t api_version = VK_API_VERSION_1_3;
+
+	// How memory is exported from Vulkan to another API. Linux drivers only
+	// expose file descriptors, Windows drivers only Win32 handles.
+#if defined(_WIN32)
+	static constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle_type =
+	        vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+#else
+	static constexpr vk::ExternalMemoryHandleTypeFlagBits external_memory_handle_type =
+	        vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+#endif
 	// Lockable that can be redirected to a pthread_mutex_t owned by monado,
 	// so that all VkQueue submitters take the same lock.
 	class queue_mutex

@@ -57,6 +57,12 @@ if(WIN32)
 	# windows.h defines min and max as macros, which breaks every std::min/std::max
 	# in shared code (and anything else taking a braced initializer list).
 	add_compile_definitions(NOMINMAX)
+	# The Vulkan Win32 headers include windows.h before winsock2.h, and the full
+	# windows.h drags in the old winsock.h, which cannot coexist with winsock2.h.
+	add_compile_definitions(WIN32_LEAN_AND_MEAN)
+	# Enables the Vulkan Win32 external memory/handle entry points (Vulkan-Hpp guards
+	# them behind this macro, Monado defines it for its own targets the same way).
+	add_compile_definitions(VK_USE_PLATFORM_WIN32_KHR)
 endif()
 
 if(MSVC)

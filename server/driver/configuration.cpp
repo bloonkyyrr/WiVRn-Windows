@@ -31,6 +31,7 @@
 #include <random>
 #include <stdlib.h>
 #include <string>
+#include <thread>
 
 #include "util/u_logging.h"
 
@@ -369,14 +370,34 @@ static void save_keys(const std::vector<headset_key> & keys)
 	std::filesystem::path known_keys_file_new = known_keys_file;
 	known_keys_file_new += ".new";
 
-	std::ofstream file(known_keys_file_new);
-	file.write(json_str.data(), json_str.size());
+	// The file has to be closed before the rename: on Windows a rename fails with
+	// a sharing violation while another handle (here the write handle) is open on
+	// either file, which used to drop every newly paired headset.
+	{
+		std::ofstream file(known_keys_file_new, std::ios::binary | std::ios::trunc);
+		file.write(json_str.data(), json_str.size());
+		file.close();
 
+		if (not file)
+		{
+			U_LOG_E("Failed to save keys: could not write %s", known_keys_file_new.string().c_str());
+			return;
+		}
+	}
+
+	// A virus scanner or a backup agent can still hold the target open for a
+	// moment, so give the rename a few tries before giving up.
 	std::error_code ec;
-	std::filesystem::rename(known_keys_file_new, known_keys_file, ec);
+	for (int attempt = 0; attempt < 5; ++attempt)
+	{
+		ec.clear();
+		std::filesystem::rename(known_keys_file_new, known_keys_file, ec);
+		if (not ec)
+			return;
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	}
 
-	if (ec)
-		U_LOG_E("Failed to save keys: %s", ec.message().c_str());
+	U_LOG_E("Failed to save keys: %s", ec.message().c_str());
 }
 
 void add_known_key(headset_key key)

@@ -350,7 +350,7 @@ video_encoder_nvenc::video_encoder_nvenc(
 	                .usage = vk::BufferUsageFlagBits::eTransferDst,
 	        },
 	        vk::ExternalMemoryBufferCreateInfo{
-	                .handleTypes = vk::ExternalMemoryHandleTypeFlagBitsKHR::eOpaqueFd,
+	                .handleTypes = vk::ExternalMemoryHandleTypeFlagBitsKHR(vk_bundle::external_memory_handle_type),
 	        },
 	};
 
@@ -368,29 +368,45 @@ video_encoder_nvenc::video_encoder_nvenc(
 		        vk::MemoryDedicatedAllocateInfo{
 		                .buffer = *i.yuv,
 		        },
-		        vk::ExportMemoryAllocateInfo{
-		                .handleTypes = vk::ExternalMemoryHandleTypeFlagBitsKHR::eOpaqueFd,
-		        },
+		        		vk::ExportMemoryAllocateInfo{
+		        .handleTypes = vk::ExternalMemoryHandleTypeFlagBitsKHR(vk_bundle::external_memory_handle_type),
+		},
 		};
 		i.mem = vk.device.allocateMemory(mem_info.get());
 		vk.name(i.mem, "nvenc memory");
 		i.yuv.bindMemory(*i.mem, 0);
 
+#if defined(_WIN32)
+		HANDLE handle = vk.device.getMemoryWin32HandleKHR({
+		        .memory = *i.mem,
+		        .handleType = vk::ExternalMemoryHandleTypeFlagBitsKHR(vk_bundle::external_memory_handle_type),
+		});
+#else
 		int fd = vk.device.getMemoryFdKHR({
 		        .memory = *i.mem,
-		        .handleType = vk::ExternalMemoryHandleTypeFlagBitsKHR::eOpaqueFd,
+		        .handleType = vk::ExternalMemoryHandleTypeFlagBitsKHR(vk_bundle::external_memory_handle_type),
 		});
+#endif
 
 		CUdeviceptr frame;
 		CU_CHECK(shared_state->cuda_fn->cuCtxPushCurrent(shared_state->cuda));
 		{
 			CUexternalMemory extmem;
+#if defined(_WIN32)
+			CUDA_EXTERNAL_MEMORY_HANDLE_DESC mem_handle_params{
+			        .type = CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32,
+			        .handle = {.win32 = {.handle = handle, .name = nullptr}},
+			        .size = memory_req.size,
+			        .flags = 0,
+			};
+#else
 			CUDA_EXTERNAL_MEMORY_HANDLE_DESC mem_handle_params{
 			        .type = CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD,
 			        .handle = {.fd = fd},
 			        .size = memory_req.size,
 			        .flags = 0,
 			};
+#endif
 			CU_CHECK(shared_state->cuda_fn->cuImportExternalMemory(&extmem, &mem_handle_params));
 
 			CUDA_EXTERNAL_MEMORY_BUFFER_DESC ext_map_params{
