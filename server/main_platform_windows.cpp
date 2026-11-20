@@ -16,17 +16,23 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include "main_platform.h"
 
-#include <windns.h>
+#include "active_runtime.h"
+#include "mdns.h"
 
 #include <windows.h>
 
 #include <shellapi.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -51,6 +57,9 @@ constexpr int command_pair = 2001;
 constexpr int command_disconnect = 2002;
 constexpr int command_config = 2003;
 constexpr int command_quit = 2004;
+constexpr int command_runtime_set = 2005;
+constexpr int command_runtime_restore = 2006;
+constexpr int command_runtime_folder = 2007;
 
 std::wstring widen(const std::string & value)
 {
@@ -103,6 +112,32 @@ std::string format_status(const server_status & status, const std::string & erro
 
 	if (not error.empty())
 		out << "\n\nLast error: " << error;
+
+	// Runtime selection, so the user can tell why an application does not see
+	// the headset.
+	try
+	{
+		auto runtime = active_runtime::query();
+		out << "\n\nOpenXR runtime:";
+		if (runtime.wivrn_active)
+			out << "\n  WiVRn is the active runtime";
+		else if (not runtime.manifest_found)
+			out << "\n  the WiVRn runtime manifest was not found (reinstall WiVRn)";
+		else if (runtime.active_runtime)
+			out << "\n  active: " << *runtime.active_runtime;
+		else
+			out << "\n  no runtime is registered";
+
+		if (runtime.manifest_found and not runtime.can_set_active)
+			out << "\n  WiVRn can only make itself the system-wide runtime with administrator rights";
+
+		out << "\n  OpenVR compatibility layer: "
+		    << (runtime.openvr_configured ? runtime.openvr_compat.string() : "not configured");
+	}
+	catch (std::exception & e)
+	{
+		out << "\n\nOpenXR runtime: cannot be queried (" << e.what() << ")";
+	}
 
 	out << "\n\nConfiguration: " << platform::config_directory().string();
 	out << "\nLogs are written by the console this process was started from.";
@@ -161,6 +196,17 @@ class server_ui_windows : public server_ui
 		}
 	}
 
+	/// Show the result of a menu action in the status text.
+	void set_last_error(const std::string & message)
+	{
+		{
+			std::lock_guard lock(mutex);
+			last_error = message;
+		}
+
+		refresh();
+	}
+
 	void create_menu(HWND hwnd)
 	{
 		HMENU menu = CreateMenu();
@@ -174,6 +220,13 @@ class server_ui_windows : public server_ui
 		HMENU pairing = CreatePopupMenu();
 		AppendMenuW(pairing, MF_STRING, command_pair, L"&Pair a new headset");
 		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(pairing), L"&Pairing");
+
+		HMENU runtime_menu = CreatePopupMenu();
+		AppendMenuW(runtime_menu, MF_STRING, command_runtime_set, L"Make WiVRn the &active OpenXR runtime");
+		AppendMenuW(runtime_menu, MF_STRING, command_runtime_restore, L"&Restore the previous OpenXR runtime");
+		AppendMenuW(runtime_menu, MF_SEPARATOR, 0, nullptr);
+		AppendMenuW(runtime_menu, MF_STRING, command_runtime_folder, L"Open the &runtime folder");
+		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(runtime_menu), L"&Runtime");
 
 		HMENU tools = CreatePopupMenu();
 		AppendMenuW(tools, MF_STRING, command_config, L"Open &configuration folder");
@@ -250,6 +303,31 @@ class server_ui_windows : public server_ui
 						auto path = platform::config_directory();
 						std::error_code ec;
 						std::filesystem::create_directories(path, ec);
+						ShellExecuteW(nullptr, L"open", path.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+						return 0;
+					}
+
+					case command_runtime_set: {
+						std::string error;
+						if (active_runtime::set_active(error))
+							set_last_error({});
+						else
+							set_last_error(error);
+						return 0;
+					}
+
+					case command_runtime_restore: {
+						std::string error;
+						if (active_runtime::restore_previous(error))
+							set_last_error({});
+						else
+							set_last_error(error);
+						return 0;
+					}
+
+					case command_runtime_folder: {
+						auto manifests = active_runtime::manifest_path();
+						auto path = manifests.empty() ? platform::config_directory() : manifests.front().parent_path();
 						ShellExecuteW(nullptr, L"open", path.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 						return 0;
 					}
@@ -413,11 +491,214 @@ public:
 	}
 };
 
+mdns_record_t ptr_record(const std::string & service_type, const std::string & instance)
+{
+	mdns_record_t record{};
+	record.name = {service_type.data(), service_type.size()};
+	record.type = MDNS_RECORDTYPE_PTR;
+	record.data.ptr.name = {instance.data(), instance.size()};
+	return record;
+}
+
+mdns_record_t srv_record(const std::string & instance, const std::string & host, int port)
+{
+	mdns_record_t record{};
+	record.name = {instance.data(), instance.size()};
+	record.type = MDNS_RECORDTYPE_SRV;
+	record.data.srv.priority = 0;
+	record.data.srv.weight = 0;
+	record.data.srv.port = (uint16_t)port;
+	record.data.srv.name = {host.data(), host.size()};
+	return record;
+}
+
+mdns_record_t txt_record(const std::string & instance, const std::string & key, const std::string & value)
+{
+	mdns_record_t record{};
+	record.name = {instance.data(), instance.size()};
+	record.type = MDNS_RECORDTYPE_TXT;
+	record.data.txt.key = {key.data(), key.size()};
+	record.data.txt.value = {value.data(), value.size()};
+	return record;
+}
+
+mdns_record_t a_record(const std::string & host, in_addr address)
+{
+	mdns_record_t record{};
+	record.name = {host.data(), host.size()};
+	record.type = MDNS_RECORDTYPE_A;
+	record.data.a.addr.sin_family = AF_INET;
+	record.data.a.addr.sin_addr = address;
+	return record;
+}
+
+std::string machine_host_name()
+{
+	char buffer[256]{};
+	if (gethostname(buffer, sizeof(buffer)) != 0 or buffer[0] == '\0')
+		return "wivrn";
+	return buffer;
+}
+
+/// IPv4 addresses of this computer, so the headset can pick one that its
+/// network can reach.
+std::vector<in_addr> local_ipv4_addresses()
+{
+	std::vector<in_addr> addresses;
+
+	auto add = [&addresses](in_addr address) {
+		if (address.s_addr == 0 or address.s_addr == htonl(INADDR_LOOPBACK))
+			return;
+		for (const auto & existing: addresses)
+		{
+			if (existing.s_addr == address.s_addr)
+				return;
+		}
+		addresses.push_back(address);
+	};
+
+	addrinfo hints{};
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+
+	addrinfo * result = nullptr;
+	char host[256]{};
+	if (gethostname(host, sizeof(host)) == 0 and getaddrinfo(host, nullptr, &hints, &result) == 0)
+	{
+		for (addrinfo * it = result; it; it = it->ai_next)
+		{
+			if (it->ai_family == AF_INET and it->ai_addr)
+				add(reinterpret_cast<const sockaddr_in *>(it->ai_addr)->sin_addr);
+		}
+		freeaddrinfo(result);
+	}
+
+	if (addresses.empty())
+	{
+		// The host name does not resolve to an address: ask the routing table
+		// which local address reaches the network.
+		int sock = (int)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		if (sock >= 0)
+		{
+			sockaddr_in destination{};
+			destination.sin_family = AF_INET;
+			destination.sin_port = htons(53);
+			inet_pton(AF_INET, "8.8.8.8", &destination.sin_addr);
+			if (connect(sock, reinterpret_cast<sockaddr *>(&destination), sizeof(destination)) == 0)
+			{
+				sockaddr_in local{};
+				int length = sizeof(local);
+				if (getsockname(sock, reinterpret_cast<sockaddr *>(&local), &length) == 0)
+					add(local.sin_addr);
+			}
+			platform::close_socket(sock);
+		}
+	}
+
+	return addresses;
+}
+
+/// Advertises the server over mDNS so headsets list the computer without any
+/// manual address entry.
+///
+/// Windows' own DNS-SD registration (DnsServiceRegister) fails with
+/// ERROR_INVALID_PARAMETER on some systems, which left the computer missing from
+/// the headset's server list. Sending the records directly only needs a
+/// UDP socket, so it works where that API does not.
 class publisher_windows : public service_publisher
 {
-	DNS_SERVICE_REGISTER_REQUEST request{};
-	PDNS_SERVICE_INSTANCE instance = nullptr;
-	bool registered = false;
+	std::jthread thread;
+
+	static void announce(std::stop_token token,
+	                     std::string service_type,
+	                     std::string instance,
+	                     std::string host,
+	                     int port,
+	                     std::map<std::string, std::string> txt)
+	{
+		auto addresses = local_ipv4_addresses();
+
+		// One socket per local address: the announcement then reaches every network
+		// the computer is on, not only the one holding the default route (a VPN
+		// adapter often does).
+		std::vector<int> sockets;
+		for (in_addr address: addresses)
+		{
+			sockaddr_in iface{};
+			iface.sin_family = AF_INET;
+			iface.sin_addr = address;
+			iface.sin_port = htons(MDNS_PORT);
+
+			int sock = mdns_socket_open_ipv4(&iface);
+			if (sock >= 0)
+				sockets.push_back(sock);
+		}
+
+		if (sockets.empty())
+		{
+			int sock = mdns_socket_open_ipv4(nullptr);
+			if (sock >= 0)
+				sockets.push_back(sock);
+		}
+
+		if (sockets.empty())
+		{
+			std::cerr << "Cannot open the mDNS socket: headsets will not find this computer automatically" << std::endl;
+			return;
+		}
+
+		auto answer = ptr_record(service_type, instance);
+
+		std::vector<mdns_record_t> authority;
+		authority.push_back(srv_record(instance, host, port));
+		for (const auto & [key, value]: txt)
+			authority.push_back(txt_record(instance, key, value));
+
+		std::vector<mdns_record_t> additional;
+		for (in_addr address: addresses)
+			additional.push_back(a_record(host, address));
+
+		std::cerr << "Advertising " << instance << " on port " << port << " through mDNS" << std::endl;
+
+		// The records are small: 2KB is far more than the service needs, and a
+		// 32-bit buffer keeps the records aligned as the mDNS writer expects.
+		std::array<uint32_t, 512> buffer{};
+		auto capacity = buffer.size() * sizeof(uint32_t);
+
+		auto send = [&](bool goodbye) {
+			for (int sock: sockets)
+			{
+				int result = goodbye
+				        ? mdns_goodbye_multicast(sock, buffer.data(), capacity, answer,
+				                                 authority.data(), authority.size(),
+				                                 additional.empty() ? nullptr : additional.data(), additional.size())
+				        : mdns_announce_multicast(sock, buffer.data(), capacity, answer,
+				                                  authority.data(), authority.size(),
+				                                  additional.empty() ? nullptr : additional.data(), additional.size());
+
+				if (result)
+					std::cerr << "Cannot send the mDNS " << (goodbye ? "goodbye" : "announcement") << std::endl;
+			}
+		};
+
+		send(false);
+		while (not token.stop_requested())
+		{
+			for (int i = 0; i < 50 and not token.stop_requested(); ++i)
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+			if (token.stop_requested())
+				break;
+
+			// Refresh well before the records expire in the headset's cache.
+			send(false);
+		}
+
+		send(true);
+
+		for (int sock: sockets)
+			mdns_socket_close(sock);
+	}
 
 public:
 	publisher_windows(const std::string & name,
@@ -427,69 +708,18 @@ public:
 	{
 		platform::initialize_networking();
 
-		std::string instance_name = name + "." + type;
-		if (instance_name.find(".local") == std::string::npos)
-			instance_name += ".local";
+		std::string service_type = type;
+		if (not service_type.ends_with('.'))
+			service_type += '.';
+		if (not service_type.ends_with(".local."))
+			service_type += "local.";
 
-		char host_buffer[256]{};
-		gethostname(host_buffer, sizeof(host_buffer));
-		std::string host = host_buffer;
-		if (host.find('.') == std::string::npos)
-			host += ".local";
+		std::string instance = name + "." + service_type;
+		std::string host = machine_host_name() + ".local";
 
-		std::vector<std::wstring> txt_keys;
-		std::vector<std::wstring> txt_values;
-		for (const auto & [key, value]: txt)
-		{
-			txt_keys.push_back(widen(key));
-			txt_values.push_back(widen(value));
-		}
-
-		std::vector<PCWSTR> key_ptrs;
-		std::vector<PCWSTR> value_ptrs;
-		for (const auto & key: txt_keys)
-			key_ptrs.push_back(key.c_str());
-		for (const auto & value: txt_values)
-			value_ptrs.push_back(value.c_str());
-
-		auto wide_instance = widen(instance_name);
-		auto wide_host = widen(host);
-
-		instance = DnsServiceConstructInstance(wide_instance.c_str(),
-		                                       wide_host.c_str(),
-		                                       nullptr,
-		                                       nullptr,
-		                                       htons((unsigned short)port),
-		                                       0,
-		                                       0,
-		                                       (DWORD)key_ptrs.size(),
-		                                       key_ptrs.empty() ? nullptr : key_ptrs.data(),
-		                                       value_ptrs.empty() ? nullptr : value_ptrs.data());
-
-		if (not instance)
-		{
-			std::cerr << "DnsServiceConstructInstance failed" << std::endl;
-			return;
-		}
-
-		request.Version = DNS_QUERY_REQUEST_VERSION1;
-		request.InterfaceIndex = 0;
-		request.pServiceInstance = instance;
-		request.unicastEnabled = FALSE;
-
-		// A null completion routine makes DnsServiceRegister synchronous.
-		DNS_STATUS status = DnsServiceRegister(&request, nullptr);
-		registered = status == ERROR_SUCCESS;
-		if (not registered)
-			std::cerr << "DnsServiceRegister failed: " << status << std::endl;
-	}
-
-	~publisher_windows() override
-	{
-		if (registered)
-			DnsServiceDeRegister(&request, nullptr);
-		if (instance)
-			DnsServiceFreeInstance(instance);
+		thread = std::jthread([service_type, instance, host, port, txt](std::stop_token token) {
+			announce(token, service_type, instance, host, port, txt);
+		});
 	}
 };
 

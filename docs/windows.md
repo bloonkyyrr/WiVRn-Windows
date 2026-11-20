@@ -56,6 +56,18 @@ manifest next to the libraries it references, and adds a Start Menu entry.
 Monado is still fetched by CMake; a Windows-capable Monado build is required for the
 server library. Monado's IPC layer is the remaining porting risk (see below).
 
+## How headsets find the computer
+
+The server advertises `_wivrn._tcp` over mDNS from its own UDP socket: it sends the
+PTR/SRV/TXT/A records for `_wivrn._tcp.local`, including every local IPv4 address, and
+refreshes them every 5 seconds. It also sends a goodbye packet when it stops, so a
+closed server disappears from the headset's list instead of lingering there.
+
+Windows' DNS-SD registration API (`DnsServiceRegister`) is not used: it fails with
+`ERROR_INVALID_PARAMETER` on some systems, which left the computer missing from the
+headset's server list. Allow `wivrn-server.exe` through Windows Firewall on private
+networks so the headset can reach the advertised port, as described in the README.
+
 ## How the runtime is selected
 
 - **OpenXR.** The OpenXR loader resolves the runtime from
@@ -63,6 +75,10 @@ server library. Monado's IPC layer is the remaining porting risk (see below).
   rights, so the server always sets `XR_RUNTIME_JSON` for itself (the variable is inherited
   by the applications it launches) and updates the registry when it can. The value is
   restored when the session ends.
+- **Restoring.** The value that was active before WiVRn is stored in
+  `%APPDATA%\wivrn\active_runtime_backup.json` and put back when the session ends, and at
+  the next start if the previous run did not shut down cleanly. A runtime that was
+  registered before WiVRn therefore keeps working afterwards.
 - **OpenVR.** `%LOCALAPPDATA%\openvr\openvrpaths.vrpath` is backed up to
   `openvrpaths.vrpath.wivrn-backup` and replaced with a single `runtime` entry pointing at
   the configured compatibility layer, which must contain
@@ -74,6 +90,7 @@ server library. Monado's IPC layer is the remaining porting risk (see below).
 | What | Where |
 | --- | --- |
 | Configuration | `%APPDATA%\wivrn\config.json` |
+| Previous runtime | `%APPDATA%\wivrn\active_runtime_backup.json` |
 | Known headset keys | `%APPDATA%\wivrn\known_keys.json` |
 | Service cookie | `%APPDATA%\wivrn\cookie` |
 | Runtime files | `%TEMP%\wivrn` |
@@ -111,6 +128,20 @@ The server logs to the console it is started from. To keep a copy:
 
 Set `XRT_LOG=debug` for verbose Monado logging, and `WIVRN_DUMP_VIDEO=<path>` to dump the
 encoded stream.
+
+## Runtime menu
+
+The server window lists the current OpenXR runtime and the OpenVR compatibility layer
+in its status text, and its **Runtime** menu can:
+
+- **Make WiVRn the active OpenXR runtime**: writes
+  `HKLM\SOFTWARE\Khronos\OpenXR\1\ActiveRuntime`, keeping the previous value for
+  restoring. This needs administrator rights; without them the menu action reports the
+  error and only `XR_RUNTIME_JSON` is used, which is enough for applications the server
+  launches itself.
+- **Restore the previous OpenXR runtime**: puts back the value saved before WiVRn took
+  over.
+- **Open the runtime folder**: shows the directory holding `openxr_wivrn.json`.
 
 ## Known limitations
 

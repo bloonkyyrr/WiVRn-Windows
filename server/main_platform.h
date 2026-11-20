@@ -107,7 +107,7 @@ class event_loop;
 /// on the thread that owns the session state.
 std::unique_ptr<server_ui> make_server_ui(event_loop * loop);
 
-/// mDNS/DNS-SD registration through DnsServiceRegister.
+/// mDNS advertisement of the server so headsets discover it automatically.
 class service_publisher
 {
 public:

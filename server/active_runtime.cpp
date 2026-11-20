@@ -109,6 +109,153 @@ std::filesystem::path openvr_client_dll(const std::filesystem::path & compat_roo
 	}
 	return {};
 }
+
+/// Registry value that was active before WiVRn took over. It is kept on disk so
+/// that the user's runtime is restored even if the server crashed.
+struct runtime_backup
+{
+	std::string manifest;
+	std::optional<std::string> previous;
+};
+
+std::filesystem::path backup_path()
+{
+	return wivrn::platform::config_directory() / "active_runtime_backup.json";
+}
+
+std::optional<runtime_backup> read_backup()
+{
+	try
+	{
+		std::ifstream file(backup_path());
+		if (not file)
+			return std::nullopt;
+
+		nlohmann::json json;
+		file >> json;
+
+		runtime_backup backup;
+		backup.manifest = json.value("manifest", std::string{});
+		if (json.contains("previous") and json["previous"].is_string())
+			backup.previous = json["previous"].get<std::string>();
+		return backup;
+	}
+	catch (std::exception & e)
+	{
+		return std::nullopt;
+	}
+}
+
+void write_backup(const std::filesystem::path & manifest, const std::optional<std::string> & previous)
+{
+	try
+	{
+		nlohmann::json json;
+		json["manifest"] = manifest.string();
+		json["previous"] = previous ? nlohmann::json(*previous) : nlohmann::json(nullptr);
+
+		std::error_code ec;
+		std::filesystem::create_directories(backup_path().parent_path(), ec);
+
+		std::ofstream file(backup_path());
+		file.exceptions(std::ofstream::failbit);
+		file << json;
+	}
+	catch (std::exception & e)
+	{
+		std::cerr << "Cannot save the previous OpenXR runtime: " << e.what() << std::endl;
+	}
+}
+
+void remove_backup()
+{
+	std::error_code ec;
+	std::filesystem::remove(backup_path(), ec);
+}
+
+std::optional<std::string> read_active_runtime()
+{
+	HKEY key = nullptr;
+	if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, openxr_registry_key, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+		return std::nullopt;
+
+	std::optional<std::string> value;
+	DWORD type = 0;
+	DWORD size = 0;
+	if (RegQueryValueExA(key, openxr_registry_value, nullptr, &type, nullptr, &size) == ERROR_SUCCESS and
+	    type == REG_SZ and size > 0)
+	{
+		std::string buffer(size, '\0');
+		if (RegQueryValueExA(key, openxr_registry_value, nullptr, &type, reinterpret_cast<BYTE *>(buffer.data()), &size) == ERROR_SUCCESS)
+		{
+			while (not buffer.empty() and buffer.back() == '\0')
+				buffer.pop_back();
+			if (not buffer.empty())
+				value = buffer;
+		}
+	}
+
+	RegCloseKey(key);
+	return value;
+}
+
+bool write_active_runtime(const std::string & value, std::string & error)
+{
+	HKEY key = nullptr;
+	LSTATUS status = RegCreateKeyExA(HKEY_LOCAL_MACHINE, openxr_registry_key, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
+	if (status != ERROR_SUCCESS or key == nullptr)
+	{
+		error = "cannot open HKLM\\" + std::string(openxr_registry_key) +
+		        " for writing (administrator rights required), error " + std::to_string(status);
+		return false;
+	}
+
+	status = RegSetValueExA(key,
+	                        openxr_registry_value,
+	                        0,
+	                        REG_SZ,
+	                        reinterpret_cast<const BYTE *>(value.c_str()),
+	                        (DWORD)value.size() + 1);
+	RegCloseKey(key);
+
+	if (status != ERROR_SUCCESS)
+	{
+		error = "cannot write the OpenXR active runtime registry value, error " + std::to_string(status);
+		return false;
+	}
+
+	return true;
+}
+
+bool delete_active_runtime(std::string & error)
+{
+	HKEY key = nullptr;
+	LSTATUS status = RegOpenKeyExA(HKEY_LOCAL_MACHINE, openxr_registry_key, 0, KEY_SET_VALUE, &key);
+	if (status != ERROR_SUCCESS or key == nullptr)
+	{
+		error = "cannot open HKLM\\" + std::string(openxr_registry_key) +
+		        " for writing (administrator rights required), error " + std::to_string(status);
+		return false;
+	}
+
+	status = RegDeleteValueA(key, openxr_registry_value);
+	RegCloseKey(key);
+
+	if (status != ERROR_SUCCESS and status != ERROR_FILE_NOT_FOUND)
+	{
+		error = "cannot restore the OpenXR active runtime registry value, error " + std::to_string(status);
+		return false;
+	}
+
+	return true;
+}
+
+bool restore_active_runtime_value(const std::optional<std::string> & previous, std::string & error)
+{
+	if (previous)
+		return write_active_runtime(*previous, error);
+	return delete_active_runtime(error);
+}
 } // namespace
 
 namespace wivrn
@@ -189,34 +336,19 @@ active_runtime::active_runtime() :
 		}
 		platform::set_environment_variable("XR_RUNTIME_JSON", manifest.string().c_str());
 
-		// System-wide selection: HKLM is writable by administrators only.
-		HKEY key = nullptr;
-		if (RegCreateKeyExA(HKEY_LOCAL_MACHINE,
-		                    openxr_registry_key,
-		                    0,
-		                    nullptr,
-		                    0,
-		                    KEY_SET_VALUE,
-		                    nullptr,
-		                    &key,
-		                    nullptr) == ERROR_SUCCESS)
+		// System-wide selection: HKLM is writable by administrators only. The value
+		// that was active before is kept so it can be restored later.
+		previous_active_runtime = read_active_runtime();
+		std::string error;
+		if (write_active_runtime(manifest.string(), error))
 		{
-			const std::string value = manifest.string();
-			if (RegSetValueExA(key,
-			                   openxr_registry_value,
-			                   0,
-			                   REG_SZ,
-			                   reinterpret_cast<const BYTE *>(value.c_str()),
-			                   (DWORD)value.size() + 1) == ERROR_SUCCESS)
-			{
-				registry_updated = true;
-			}
-			else
-			{
-				std::cerr << "Cannot write the OpenXR active runtime registry value (administrator rights required); "
-				          << "applications launched by WiVRn still use XR_RUNTIME_JSON" << std::endl;
-			}
-			RegCloseKey(key);
+			registry_updated = true;
+			if (not read_backup() and (not previous_active_runtime or *previous_active_runtime != manifest.string()))
+				write_backup(manifest, previous_active_runtime);
+		}
+		else
+		{
+			std::cerr << error << "; applications launched by WiVRn still use XR_RUNTIME_JSON" << std::endl;
 		}
 		break;
 	}
@@ -263,12 +395,20 @@ active_runtime::~active_runtime()
 
 	if (registry_updated)
 	{
-		HKEY key = nullptr;
-		if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, openxr_registry_key, 0, KEY_SET_VALUE, &key) == ERROR_SUCCESS)
+		// Restore the runtime the user had, which is in the backup when one was
+		// written (it also covers a value changed from the UI).
+		std::optional<std::string> previous = previous_active_runtime;
+		if (not active_runtime_json.empty())
 		{
-			RegDeleteValueA(key, openxr_registry_value);
-			RegCloseKey(key);
+			if (auto backup = read_backup(); backup and backup->manifest == active_runtime_json.front().string())
+				previous = backup->previous;
 		}
+
+		std::string error;
+		if (not restore_active_runtime_value(previous, error))
+			std::cerr << error << std::endl;
+
+		remove_backup();
 		registry_updated = false;
 	}
 
@@ -295,6 +435,21 @@ active_runtime::~active_runtime()
 
 void active_runtime::cleanup_openxr()
 {
+	// Restore an OpenXR value left behind by an unclean shutdown.
+	if (auto backup = read_backup())
+	{
+		auto current = read_active_runtime();
+		if (current and *current == backup->manifest)
+		{
+			std::string error;
+			if (restore_active_runtime_value(backup->previous, error))
+				std::cerr << "Restored the OpenXR runtime that was active before WiVRn" << std::endl;
+			else
+				std::cerr << "Cannot restore the previous OpenXR runtime: " << error << std::endl;
+		}
+		remove_backup();
+	}
+
 	// Restore an OpenVR manifest backup left behind by an unclean shutdown.
 	auto manifest = openvr_manifest_path();
 	if (std::filesystem::exists(backup_name(manifest)))
@@ -306,6 +461,88 @@ void active_runtime::cleanup_openxr()
 		if (ec)
 			std::cerr << "Failed to restore " << manifest.string() << ": " << ec.message() << std::endl;
 	}
+}
+
+runtime_info active_runtime::query()
+{
+	runtime_info info;
+
+	auto manifests = manifest_path();
+	if (not manifests.empty())
+	{
+		info.manifest = manifests.front();
+		info.manifest_found = true;
+	}
+
+	info.active_runtime = read_active_runtime();
+	if (auto backup = read_backup())
+		info.previous_runtime = backup->previous;
+
+	info.wivrn_active = info.manifest_found and info.active_runtime and *info.active_runtime == info.manifest.string();
+
+	HKEY key = nullptr;
+	if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, openxr_registry_key, 0, KEY_SET_VALUE, &key) == ERROR_SUCCESS)
+	{
+		info.can_set_active = true;
+		RegCloseKey(key);
+	}
+
+	info.openvr_compat = openvr_compat_path();
+	info.openvr_configured = not info.openvr_compat.empty() and not openvr_client_dll(info.openvr_compat).empty();
+
+	return info;
+}
+
+bool active_runtime::set_active(std::string & error)
+{
+	auto manifests = manifest_path();
+	if (manifests.empty())
+	{
+		error = "the WiVRn OpenXR runtime manifest was not found next to the server";
+		return false;
+	}
+
+	const auto & manifest = manifests.front();
+
+	auto current = read_active_runtime();
+	if (not current or *current != manifest.string())
+	{
+		// Remember the value that is being replaced, unless an earlier session
+		// already saved it.
+		if (not read_backup())
+			write_backup(manifest, current);
+	}
+
+	platform::set_environment_variable("XR_RUNTIME_JSON", manifest.string().c_str());
+
+	if (not write_active_runtime(manifest.string(), error))
+	{
+		error += "; applications launched by WiVRn still use XR_RUNTIME_JSON";
+		return false;
+	}
+
+	return true;
+}
+
+bool active_runtime::restore_previous(std::string & error)
+{
+	auto backup = read_backup();
+	if (not backup)
+	{
+		error = "there is no saved OpenXR runtime to restore";
+		return false;
+	}
+
+	if (not restore_active_runtime_value(backup->previous, error))
+		return false;
+
+	if (backup->previous)
+		platform::set_environment_variable("XR_RUNTIME_JSON", backup->previous->c_str());
+	else
+		platform::set_environment_variable("XR_RUNTIME_JSON", "");
+
+	remove_backup();
+	return true;
 }
 
 } // namespace wivrn
