@@ -23,6 +23,7 @@
 #include "util/u_trace_marker.h"
 
 #include "active_runtime.h"
+#include "adb.h"
 #include "driver/configuration.h"
 #include "driver/wivrn_connection.h"
 #include "exit_codes.h"
@@ -106,6 +107,9 @@ const std::chrono::milliseconds default_delay_next_try = 10ms;
 std::optional<active_runtime> runtime_setter;
 std::optional<sleep_inhibitor> inhibitor;
 
+std::unique_ptr<adb::service> adb_watcher;
+bool use_adb = true;
+
 void update_fsm();
 void start_publishing();
 void stop_publishing();
@@ -114,6 +118,7 @@ void stop_listening();
 void set_encryption_state(wivrn_connection::encryption_state new_enc_state);
 void on_headset_info_packet(const wivrn::from_headset::headset_info_packet & info);
 void expose_known_keys();
+void update_adb_status();
 
 bool server_running()
 {
@@ -487,6 +492,19 @@ void expose_known_keys()
 	ui->apply(status);
 }
 
+void update_adb_status()
+{
+	if (not adb_watcher or not ui)
+		return;
+
+	auto snapshot = adb_watcher->get();
+	status.adb_enabled = snapshot.enabled;
+	status.adb_available = snapshot.available;
+	status.adb_message = snapshot.message;
+	status.adb_devices = std::move(snapshot.devices);
+	ui->apply(status);
+}
+
 void on_name_acquired()
 {
 	children = ui->make_children_manager(update_fsm);
@@ -591,6 +609,16 @@ ui_callbacks make_callbacks()
 			wivrn_ipc_socket_main_loop->send(to_monado::set_bitrate{(uint32_t)bitrate});
 	};
 
+	callbacks.adb_connect = [] {
+		if (adb_watcher)
+			adb_watcher->connect();
+	};
+
+	callbacks.adb_refresh = [] {
+		if (adb_watcher)
+			adb_watcher->refresh();
+	};
+
 	return callbacks;
 }
 
@@ -654,11 +682,27 @@ int inner_main(int argc, char * argv[], bool show_instructions)
 	ui->start(status, json_configuration, make_callbacks(), on_name_acquired);
 	ui->apply(status);
 
+	if (use_adb)
+	{
+		status.adb_enabled = true;
+		adb_watcher = std::make_unique<adb::service>();
+		adb_watcher->start(configuration().port, [] {
+			if (loop)
+				loop->invoke(update_adb_status);
+		});
+		update_adb_status();
+	}
+
 	loop->add_timeout(100, poll_shutdown);
 	loop->run();
 
 	stop_publishing();
 	stop_listening();
+	if (adb_watcher)
+	{
+		adb_watcher->stop();
+		adb_watcher.reset();
+	}
 	children.reset();
 	ui.reset();
 
@@ -680,6 +724,7 @@ int main(int argc, char * argv[])
 	auto no_instructions = app.add_flag("--no-instructions")->group("");
 	auto no_fork = app.add_flag("--no-fork")->description("disable fork to serve connection")->group("Debug");
 	auto no_publish = app.add_flag("--no-publish-service")->description("disable publishing the service through DNS-SD");
+	auto no_adb = app.add_flag("--no-adb")->description("don't forward the server port to USB-connected headsets with adb");
 	auto no_encrypt = app.add_flag("--no-encrypt")->description("disable encryption")->group("Debug");
 #if WIVRN_FEATURE_DEBUG_GUI
 	auto debug_gui = app.add_flag("--debug-gui")->description("show the debug GUI")->group("Debug");
@@ -712,6 +757,8 @@ int main(int argc, char * argv[])
 		publication = wivrn::service_publication::none;
 	else
 		publication = configuration().publication;
+
+	use_adb = not *no_adb;
 
 #if WIVRN_FEATURE_DEBUG_GUI
 	show_debug_gui = bool(*debug_gui);

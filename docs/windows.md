@@ -75,6 +75,21 @@ Windows' DNS-SD registration API (`DnsServiceRegister`) is not used: it fails wi
 headset's server list. Allow `wivrn-server.exe` through Windows Firewall on private
 networks so the headset can reach the advertised port, as described in the README.
 
+## USB connection over ADB
+
+WiVRn streams over the network by default. When `adb` (Android platform-tools) is on
+`PATH`, the server also looks for headsets connected by cable, forwards its TCP port into
+the headset (`adb reverse tcp:<port> tcp:<port>`) and lists the devices in the status
+window. The **USB → Connect the headset over USB** menu action then starts the WiVRn app
+with a `wivrn+tcp://localhost` intent, which makes it stream over the cable instead of
+the network.
+
+- The headset needs developer mode and USB debugging, and the debugging prompt shown
+  inside the headset has to be accepted once per computer.
+- The port is forwarded again by itself when the cable is unplugged and replugged.
+- `--no-adb` turns the feature off; no `adb` process is started then.
+- Without `adb` on `PATH` nothing is started and the status window says so.
+
 ## How the runtime is selected
 
 - **OpenXR.** The OpenXR loader resolves the runtime from

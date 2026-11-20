@@ -110,6 +110,7 @@ if (WIVRN_BUILD_SERVER)
 	add_executable(wivrn-server
 			accept_connection.cpp
 			active_runtime.cpp
+			adb.cpp
 			hostname.cpp
 			main.cpp
 			main_platform.h

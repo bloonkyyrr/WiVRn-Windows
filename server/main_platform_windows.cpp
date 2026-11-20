@@ -60,6 +60,8 @@ constexpr int command_quit = 2004;
 constexpr int command_runtime_set = 2005;
 constexpr int command_runtime_restore = 2006;
 constexpr int command_runtime_folder = 2007;
+constexpr int command_adb_connect = 2008;
+constexpr int command_adb_refresh = 2009;
 
 std::wstring widen(const std::string & value)
 {
@@ -109,6 +111,23 @@ std::string format_status(const server_status & status, const std::string & erro
 		for (const auto & key: status.known_keys)
 			out << "\n  " << (key.name.empty() ? "Unknown headset" : key.name);
 	}
+
+	out << "\n\nUSB (adb):";
+	if (not status.adb_enabled)
+		out << "\n  disabled on the command line";
+	else if (not status.adb_available)
+		out << "\n  adb was not found on PATH (install the Android platform-tools)";
+	else if (status.adb_devices.empty())
+		out << "\n  no headset connected by cable";
+	else
+	{
+		for (const auto & headset: status.adb_devices)
+			out << "\n  " << (headset.model.empty() ? "Headset" : headset.model)
+			    << " (" << headset.serial << ") - "
+			    << (headset.forwarded ? "ready, connect from the WiVRn app or the USB menu" : headset.state);
+	}
+	if (not status.adb_message.empty())
+		out << "\n  " << status.adb_message;
 
 	if (not error.empty())
 		out << "\n\nLast error: " << error;
@@ -228,6 +247,11 @@ class server_ui_windows : public server_ui
 		AppendMenuW(runtime_menu, MF_STRING, command_runtime_folder, L"Open the &runtime folder");
 		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(runtime_menu), L"&Runtime");
 
+		HMENU usb = CreatePopupMenu();
+		AppendMenuW(usb, MF_STRING, command_adb_connect, L"&Connect the headset over USB");
+		AppendMenuW(usb, MF_STRING, command_adb_refresh, L"&Refresh USB devices");
+		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(usb), L"&USB");
+
 		HMENU tools = CreatePopupMenu();
 		AppendMenuW(tools, MF_STRING, command_config, L"Open &configuration folder");
 		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(tools), L"&Tools");
@@ -331,6 +355,14 @@ class server_ui_windows : public server_ui
 						ShellExecuteW(nullptr, L"open", path.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 						return 0;
 					}
+
+					case command_adb_connect:
+						dispatch(callbacks.adb_connect);
+						return 0;
+
+					case command_adb_refresh:
+						dispatch(callbacks.adb_refresh);
+						return 0;
 
 					case command_pair: {
 						// Pairing needs the event loop thread; the PIN shows up in

@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "adb.h"
 #include "driver/configuration.h"
 #include "platform.h"
 #include "start_application.h"
@@ -62,6 +63,12 @@ struct server_status
 	std::string client_tab;
 	std::string steam_command;
 	std::vector<headset_key> known_keys;
+
+	// USB (adb) connection
+	bool adb_enabled = false;
+	bool adb_available = false;
+	std::string adb_message;
+	std::vector<adb::device> adb_devices;
 };
 
 /// Callbacks from the desktop UI back into the server state machine.
@@ -77,6 +84,10 @@ struct ui_callbacks
 	std::function<void(std::string)> set_client_tab;
 	std::function<void(std::string)> json_configuration_changed;
 	std::function<void(int)> bitrate_changed;
+	/// Start the WiVRn app on the USB-connected headsets, so it connects over the cable.
+	std::function<void()> adb_connect;
+	/// Poll the USB devices now instead of waiting for the next automatic poll.
+	std::function<void()> adb_refresh;
 };
 
 /// Desktop integration: a Win32 status window driven by the server state.

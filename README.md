@@ -186,7 +186,9 @@ If the server list is empty in the headset app:
       - `org.meumeu.wivrn.github.nighly` for Github nightlies (wirvn-apk [repository](https://github.com/WiVRn/WiVRn-APK/releases))
       - `org.meumeu.wivrn.github.testing` for Github CI builds
       - `org.meumeu.wivrn.local` for developer builds
-- Pair the headset as described in [connect to the server](#connect-to-the-server).</details>
+- Pair the headset as described in [connect to the server](#connect-to-the-server).
+- On Windows the server does this by itself when `adb` is on `PATH`: use **USB → Connect
+  the headset over USB**. See [USB connection over ADB](docs/windows.md#usb-connection-over-adb).</details>
 
 <details><summary>Where are the logs?</summary>
 
