@@ -63,6 +63,13 @@ PTR/SRV/TXT/A records for `_wivrn._tcp.local`, including every local IPv4 addres
 refreshes them every 5 seconds. It also sends a goodbye packet when it stops, so a
 closed server disappears from the headset's list instead of lingering there.
 
+The SRV target is `<computer>-wivrn.local` rather than `<computer>.local`: Bonjour and
+the Windows mDNS responder also answer for the plain computer name and hand out
+addresses the headset cannot reach (the link-local `169.254.x.x` address of an idle
+adapter, for example). Link-local addresses are only advertised when the computer has
+no other IPv4 address, because a headset that tries one first waits for the connection
+to time out.
+
 Windows' DNS-SD registration API (`DnsServiceRegister`) is not used: it fails with
 `ERROR_INVALID_PARAMETER` on some systems, which left the computer missing from the
 headset's server list. Allow `wivrn-server.exe` through Windows Firewall on private

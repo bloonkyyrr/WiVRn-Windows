@@ -544,11 +544,19 @@ std::string machine_host_name()
 /// network can reach.
 std::vector<in_addr> local_ipv4_addresses()
 {
-	std::vector<in_addr> addresses;
+	// 169.254.0.0/16 (APIPA, the address of a network adapter that found no DHCP
+	// server) only reaches the link it belongs to. A headset that tries it first
+	// waits for the connection attempt to time out, so it is only announced when
+	// the computer has no other address.
+	std::vector<in_addr> routable;
+	std::vector<in_addr> link_local;
 
-	auto add = [&addresses](in_addr address) {
+	auto add = [&routable, &link_local](in_addr address) {
 		if (address.s_addr == 0 or address.s_addr == htonl(INADDR_LOOPBACK))
 			return;
+
+		auto & addresses = (ntohl(address.s_addr) & 0xffff0000) == 0xa9fe0000 ? link_local : routable;
+
 		for (const auto & existing: addresses)
 		{
 			if (existing.s_addr == address.s_addr)
@@ -573,7 +581,7 @@ std::vector<in_addr> local_ipv4_addresses()
 		freeaddrinfo(result);
 	}
 
-	if (addresses.empty())
+	if (routable.empty() and link_local.empty())
 	{
 		// The host name does not resolve to an address: ask the routing table
 		// which local address reaches the network.
@@ -595,7 +603,10 @@ std::vector<in_addr> local_ipv4_addresses()
 		}
 	}
 
-	return addresses;
+	if (not routable.empty())
+		return routable;
+
+	return link_local;
 }
 
 /// Advertises the server over mDNS so headsets list the computer without any
@@ -715,7 +726,10 @@ public:
 			service_type += "local.";
 
 		std::string instance = name + "." + service_type;
-		std::string host = machine_host_name() + ".local";
+		// A host name of its own: Bonjour and the Windows mDNS responder also answer
+		// for <computer>.local, and they hand out addresses that the headset cannot
+		// reach (such as the link-local address of an idle adapter).
+		std::string host = machine_host_name() + "-wivrn.local";
 
 		thread = std::jthread([service_type, instance, host, port, txt](std::stop_token token) {
 			announce(token, service_type, instance, host, port, txt);

@@ -45,6 +45,18 @@
 thread_local crypto::encrypt_context wivrn::UDP::encrypter{EVP_aes_128_ctr()};
 std::atomic<uint64_t> wivrn::UDP::iv_counter;
 
+namespace
+{
+// Windows makes IPv6 sockets IPv6-only by default, so a headset connecting to
+// the IPv4 address advertised over mDNS was refused. Accept both families on the
+// same socket, as the Linux build does.
+void accept_ipv4_and_ipv6(int fd)
+{
+	int disabled = 0;
+	setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&disabled, sizeof(disabled));
+}
+} // namespace
+
 const char * wivrn::invalid_packet::what() const noexcept
 {
 	return "Invalid packet";
@@ -73,12 +85,13 @@ wivrn::fd_base::~fd_base()
 		platform::close_socket(fd);
 }
 
-wivrn::UDP::UDP()
+	wivrn::UDP::UDP()
 {
 	platform::initialize_networking();
 	fd = (int)socket(AF_INET6, SOCK_DGRAM, 0);
 	if (fd < 0)
 		platform::throw_socket_error("socket");
+	accept_ipv4_and_ipv6(fd);
 	platform::set_close_on_exec(fd);
 }
 
@@ -205,7 +218,7 @@ wivrn::TCP::TCP(sockaddr_in sa)
 	init();
 }
 
-wivrn::TCPListener::TCPListener(int port)
+	wivrn::TCPListener::TCPListener(int port)
 {
 	platform::initialize_networking();
 	fd = (int)socket(AF_INET6, SOCK_STREAM, 0);
@@ -214,6 +227,9 @@ wivrn::TCPListener::TCPListener(int port)
 	{
 		platform::throw_socket_error("socket");
 	}
+
+	accept_ipv4_and_ipv6(fd);
+
 
 	int reuse_addr = 1;
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse_addr, sizeof(reuse_addr)) < 0)

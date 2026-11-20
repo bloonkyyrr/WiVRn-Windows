@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <iostream>
 #include <regex>
 #include <variant>
 #if !defined(_WIN32)
@@ -85,6 +86,17 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 	if (getpeername(control.get_fd(), (sockaddr *)&client_address, &len) < 0)
 	{
 		platform::throw_socket_error("Cannot get client address");
+	}
+
+	// Tell the connection apart from one that never reaches this computer: if this
+	// line is missing from the log, the headset is not talking to this server.
+	{
+		char peer[64]{};
+		if (client_address.sin6_family == AF_INET)
+			inet_ntop(AF_INET, &reinterpret_cast<const sockaddr_in *>(&client_address)->sin_addr, peer, sizeof(peer));
+		else
+			inet_ntop(AF_INET6, &client_address.sin6_addr, peer, sizeof(peer));
+		std::cerr << "Connection attempt from " << peer << std::endl;
 	}
 
 	if (configuration().tcp_only)
