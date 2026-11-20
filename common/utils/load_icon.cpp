@@ -18,6 +18,8 @@
 
 #include "load_icon.h"
 
+#include "path_utf8.h"
+
 #include <windows.h>
 #include <wincodec.h>
 
@@ -143,16 +145,16 @@ const std::vector<icon> & load_icon(const std::filesystem::path & filename)
 	                                              GENERIC_READ,
 	                                              WICDecodeMetadataCacheOnDemand,
 	                                              &decoder)))
-		throw std::runtime_error("unsupported icon format: " + filename.string());
+		throw std::runtime_error("unsupported icon format: " + path_to_utf8(filename));
 
 	com_ptr<IWICBitmapFrameDecode> frame_decode;
 	if (FAILED(decoder->GetFrame(0, &frame_decode)))
-		throw std::runtime_error("icon has no frame: " + filename.string());
+		throw std::runtime_error("icon has no frame: " + path_to_utf8(filename));
 
 	UINT width = 0;
 	UINT height = 0;
 	if (FAILED(frame_decode->GetSize(&width, &height)) or width == 0 or height == 0)
-		throw std::runtime_error("invalid icon size: " + filename.string());
+		throw std::runtime_error("invalid icon size: " + path_to_utf8(filename));
 
 	com_ptr<IWICFormatConverter> converter;
 	if (FAILED(factory->CreateFormatConverter(&converter)))
@@ -163,7 +165,7 @@ const std::vector<icon> & load_icon(const std::filesystem::path & filename)
 	                                 nullptr,
 	                                 0.0,
 	                                 WICBitmapPaletteTypeCustom)))
-		throw std::runtime_error("cannot convert the icon: " + filename.string());
+		throw std::runtime_error("cannot convert the icon: " + path_to_utf8(filename));
 
 	std::vector<icon> icons;
 	icons.push_back(icon{

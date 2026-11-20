@@ -906,7 +906,17 @@ void wivrn_session::operator()(from_headset::get_application_list && request)
 	        .variant = std::move(request.variant),
 	};
 
-	auto apps = list_applications();
+	// Listing the Start Menu and the Steam libraries touches user files: keep a
+	// failure there from taking the session down.
+	std::unordered_map<std::string, application> apps;
+	try
+	{
+		apps = list_applications();
+	}
+	catch (std::exception & e)
+	{
+		U_LOG_W("Cannot list applications: %s", e.what());
+	}
 
 	for (const auto & [id, app]: apps)
 	{

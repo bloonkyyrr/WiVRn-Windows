@@ -368,17 +368,31 @@ process_id spawn_process(const std::vector<std::string> & args,
 		command_line += quote(arg);
 	}
 
-	std::vector<char> mutable_command_line(command_line.begin(), command_line.end());
-	mutable_command_line.push_back('\0');
+	// CreateProcessW, not A: the arguments and the working directory are UTF-8
+	// strings here, and the ANSI variant would mangle a path with characters
+	// outside the current code page (or fail to find it).
+	auto to_wide = [](const std::string & value) {
+		if (value.empty())
+			return std::wstring();
 
-	std::string cwd = working_directory ? working_directory->string() : std::string();
+		int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), nullptr, 0);
+		if (size <= 0)
+			return std::wstring();
 
-	STARTUPINFOA startup{};
+		std::wstring result(size, L'\0');
+		MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), result.data(), size);
+		return result;
+	};
+
+	std::wstring mutable_command_line = to_wide(command_line);
+	auto cwd = working_directory ? working_directory->wstring() : std::wstring();
+
+	STARTUPINFOW startup{};
 	startup.cb = sizeof(startup);
 	PROCESS_INFORMATION process{};
 
 	DWORD flags = new_process_group ? CREATE_NEW_PROCESS_GROUP : 0;
-	if (!CreateProcessA(nullptr,
+	if (!CreateProcessW(nullptr,
 	                    mutable_command_line.data(),
 	                    nullptr,
 	                    nullptr,

@@ -25,6 +25,8 @@
 
 #include <windows.h>
 
+#include <shellapi.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -522,6 +524,62 @@ bool active_runtime::set_active(std::string & error)
 	}
 
 	return true;
+}
+
+bool active_runtime::set_active_elevated(std::string & error)
+{
+	auto exe = executable_path();
+	if (exe.empty())
+	{
+		error = "cannot locate the WiVRn server executable to ask for administrator rights";
+		return false;
+	}
+
+	std::wstring file = exe.wstring();
+	std::wstring parameters = L"--set-openxr-runtime";
+
+	SHELLEXECUTEINFOW info{};
+	info.cbSize = sizeof(info);
+	info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+	info.lpVerb = L"runas";
+	info.lpFile = file.c_str();
+	info.lpParameters = parameters.c_str();
+	info.nShow = SW_HIDE;
+
+	if (not ShellExecuteExW(&info) or info.hProcess == nullptr)
+	{
+		error = "administrator rights were refused, the OpenXR runtime was not changed";
+		return false;
+	}
+
+	WaitForSingleObject(info.hProcess, INFINITE);
+
+	DWORD status = 1;
+	GetExitCodeProcess(info.hProcess, &status);
+	CloseHandle(info.hProcess);
+
+	if (status != 0)
+	{
+		error = "the elevated helper could not write the OpenXR active runtime";
+		return false;
+	}
+
+	// The helper changed the registry only: the process environment of this
+	// server still has to point at the WiVRn manifest.
+	if (auto manifests = manifest_path(); not manifests.empty())
+		platform::set_environment_variable("XR_RUNTIME_JSON", manifests.front().string().c_str());
+
+	return true;
+}
+
+int active_runtime::elevated_helper_main()
+{
+	std::string error;
+	if (set_active(error))
+		return 0;
+
+	std::cerr << error << std::endl;
+	return 1;
 }
 
 bool active_runtime::restore_previous(std::string & error)

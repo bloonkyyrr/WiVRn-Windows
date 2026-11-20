@@ -18,6 +18,7 @@
  */
 
 #include "steam_info.h"
+#include "path_utf8.h"
 #include "vdf.h"
 #include <bit>
 #include <cctype>
@@ -190,7 +191,7 @@ std::vector<std::filesystem::path> steam_library_folders(const std::filesystem::
 
 	std::string content{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 
-	static const std::regex path_entry(R"re("path"[ 	]*"((?:[^"\]|\.)*)")re");
+	static const std::regex path_entry(R"re("path"[ \t]*"((?:[^"\\]|\\.)*)")re");
 	for (auto it = std::sregex_iterator(content.begin(), content.end(), path_entry); it != std::sregex_iterator(); ++it)
 	{
 		std::string value = (*it)[1].str();
@@ -565,6 +566,6 @@ std::string wivrn::steam::get_steam_command() const
 {
 	auto executable = root / "steam.exe";
 	if (std::filesystem::exists(executable))
-		return "\"" + executable.string() + "\"";
+		return "\"" + wivrn::path_to_utf8(executable) + "\"";
 	return "steam";
 }

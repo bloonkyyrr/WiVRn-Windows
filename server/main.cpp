@@ -444,13 +444,8 @@ void set_encryption_state(wivrn_connection::encryption_state new_enc_state)
 			break;
 
 		case wivrn_connection::encryption_state::pairing: {
-			std::random_device rd;
-			std::mt19937 gen(rd());
-			std::uniform_int_distribution<> distrib(0, 999999);
-
-			char buffer[7];
-			snprintf(buffer, 7, "%06d", distrib(gen));
-			pin = buffer;
+			// Fixed PIN: pairing always uses "000000" instead of a random code.
+			pin = "000000";
 			status.pin = pin;
 			status.pairing_enabled = true;
 			status.encryption_enabled = true;
@@ -726,11 +721,16 @@ int main(int argc, char * argv[])
 	auto no_publish = app.add_flag("--no-publish-service")->description("disable publishing the service through DNS-SD");
 	auto no_adb = app.add_flag("--no-adb")->description("don't forward the server port to USB-connected headsets with adb");
 	auto no_encrypt = app.add_flag("--no-encrypt")->description("disable encryption")->group("Debug");
+	auto set_openxr_runtime = app.add_flag("--set-openxr-runtime", "write the active OpenXR runtime only, then exit")->group("");
 #if WIVRN_FEATURE_DEBUG_GUI
 	auto debug_gui = app.add_flag("--debug-gui")->description("show the debug GUI")->group("Debug");
 #endif
 
 	CLI11_PARSE(app, argc, argv);
+
+	// Elevated helper started by active_runtime::set_active_elevated.
+	if (*set_openxr_runtime)
+		return active_runtime::elevated_helper_main();
 
 	if (*version_flag)
 	{

@@ -19,6 +19,7 @@
 
 #include "application.h"
 
+#include "utils/path_utf8.h"
 #include "utils/steam_info.h"
 
 #include <windows.h>
@@ -161,7 +162,7 @@ std::optional<shortcut> read_shortcut(const std::filesystem::path & path)
 
 bool is_uninstaller(const std::filesystem::path & target)
 {
-	auto name = target.filename().string();
+	auto name = path_to_utf8(target.filename());
 	return name.starts_with("unins") or name.starts_with("Uninstall") or name.starts_with("uninstall");
 }
 } // namespace
@@ -213,22 +214,22 @@ std::unordered_map<std::string, application> list_applications()
 			if (is_uninstaller(shortcut->target))
 				continue;
 
-			auto name = entry->path().stem().string();
+			auto name = path_to_utf8(entry->path().stem());
 			if (name.empty())
 				continue;
 
 			application app;
 			app.name[""] = std::move(name);
-			app.exec = "\"" + shortcut->target.string() + "\"";
+			app.exec = "\"" + path_to_utf8(shortcut->target) + "\"";
 			if (not shortcut->arguments.empty())
 				app.exec += " " + shortcut->arguments;
 
 			if (not shortcut->working_directory.empty())
 				app.path = shortcut->working_directory;
 			else
-				app.path = shortcut->target.parent_path().string();
+				app.path = path_to_utf8(shortcut->target.parent_path());
 
-			res.emplace("shortcut:" + entry->path().string(), std::move(app));
+			res.emplace("shortcut:" + path_to_utf8(entry->path()), std::move(app));
 		}
 	}
 

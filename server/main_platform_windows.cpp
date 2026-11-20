@@ -143,12 +143,15 @@ std::string format_status(const server_status & status, const std::string & erro
 		else if (not runtime.manifest_found)
 			out << "\n  the WiVRn runtime manifest was not found (reinstall WiVRn)";
 		else if (runtime.active_runtime)
+		{
 			out << "\n  active: " << *runtime.active_runtime;
+			// The OpenXR loader never reads HKCU, so an application that WiVRn did
+			// not start (a game started by Steam) uses this runtime, not WiVRn.
+			out << "\n  applications launched outside WiVRn (from Steam) use it:"
+			    << " choose Runtime -> Make WiVRn the active OpenXR runtime";
+		}
 		else
 			out << "\n  no runtime is registered";
-
-		if (runtime.manifest_found and not runtime.can_set_active)
-			out << "\n  WiVRn can only make itself the system-wide runtime with administrator rights";
 
 		out << "\n  OpenVR compatibility layer: "
 		    << (runtime.openvr_configured ? runtime.openvr_compat.string() : "not configured");
@@ -332,8 +335,10 @@ class server_ui_windows : public server_ui
 					}
 
 					case command_runtime_set: {
+						// HKLM needs administrator rights: fall back to an elevated copy of
+						// this executable, which shows a UAC prompt.
 						std::string error;
-						if (active_runtime::set_active(error))
+						if (active_runtime::set_active(error) or active_runtime::set_active_elevated(error))
 							set_last_error({});
 						else
 							set_last_error(error);

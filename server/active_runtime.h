@@ -80,6 +80,15 @@ public:
 	/// missing administrator rights).
 	static bool set_active(std::string & error);
 
+	/// Same as set_active, but runs the write in an elevated copy of this
+	/// executable so a UAC prompt is shown instead of failing. Needed because the
+	/// OpenXR loader never reads the per-user registry hive: a game started by
+	/// Steam (not by WiVRn) only sees HKLM.
+	static bool set_active_elevated(std::string & error);
+
+	/// Entry point of the elevated copy started by set_active_elevated.
+	static int elevated_helper_main();
+
 	/// Restore the runtime that was active before WiVRn, or remove the value if
 	/// there was none. Returns false and fills \p error on failure.
 	static bool restore_previous(std::string & error);

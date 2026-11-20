@@ -19,6 +19,10 @@
 
 #include "start_application.h"
 
+#ifdef _WIN32
+#include "utils/command_line.h"
+#endif
+
 #include <cassert>
 #include <filesystem>
 #include <iomanip>
@@ -30,6 +34,8 @@ namespace wivrn
 
 children_manager::~children_manager() {}
 
+#ifndef _WIN32
+/// POSIX-style unescaping, used for the .desktop exec strings on Linux.
 static std::vector<std::string> unescape_string(const std::string & app_string)
 {
 	std::vector<std::string> app;
@@ -92,9 +98,17 @@ static std::vector<std::string> unescape_string(const std::string & app_string)
 	return app;
 }
 
+#endif // !_WIN32
+
 void children_manager::start_application(const std::string & exec, const std::optional<std::string> & path)
 {
+#ifdef _WIN32
+	// Windows paths contain backslashes, which the POSIX unescaping above would
+	// swallow; split with the Windows rules instead.
+	start_application(split_windows_command_line(exec), path);
+#else
 	start_application(unescape_string(exec), path);
+#endif
 }
 
 forked_children::forked_children(std::function<void()> state_changed_cb) :
